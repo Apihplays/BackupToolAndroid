@@ -1,0 +1,31 @@
+[package]
+name = "andpull"
+version = "0.1.0"
+edition = "2021"
+description = "Blazingly fast ADB media pull tool with TUI"
+
+[dependencies]
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+
+# Serialization (state/resume)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Byte formatting
+bytesize = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
