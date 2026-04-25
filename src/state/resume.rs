@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
@@ -24,6 +24,15 @@ pub struct FailedFile {
     pub last_attempt: DateTime<Utc>,
 }
 
+/// A sync record for delta comparison — tracks file size at last successful pull.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncRecord {
+    pub path: String,
+    pub size: u64,
+    pub local_path: String,
+    pub synced_at: DateTime<Utc>,
+}
+
 /// Persisted transfer state for resume support.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TransferState {
@@ -34,6 +43,9 @@ pub struct TransferState {
     pub completed_files: Vec<CompletedFile>,
     pub completed_dirs: Vec<String>,
     pub failed_files: Vec<FailedFile>,
+    /// Delta sync manifest — records what was last synced for change detection.
+    #[serde(default)]
+    pub synced_files: Vec<SyncRecord>,
 }
 
 impl TransferState {
@@ -47,15 +59,18 @@ impl TransferState {
             completed_files: Vec::new(),
             completed_dirs: Vec::new(),
             failed_files: Vec::new(),
+            synced_files: Vec::new(),
         }
     }
 }
 
-/// Manages transfer state persistence for resume support.
+/// Manages transfer state persistence for resume and delta sync support.
+#[derive(Clone)]
 pub struct StateManager {
     state: TransferState,
     state_file: PathBuf,
-    completed_set: HashSet<String>, // fast lookup
+    completed_set: HashSet<String>,   // fast lookup for resume
+    sync_map: HashMap<String, u64>,   // fast lookup for delta: path -> size
     max_retries: u32,
 }
 
@@ -68,6 +83,7 @@ impl StateManager {
             state: TransferState::new(source, destination),
             state_file,
             completed_set: HashSet::new(),
+            sync_map: HashMap::new(),
             max_retries: 3,
         }
     }
@@ -89,10 +105,17 @@ impl StateManager {
             .map(|f| f.path.clone())
             .collect();
 
+        let sync_map: HashMap<String, u64> = state
+            .synced_files
+            .iter()
+            .map(|r| (r.path.clone(), r.size))
+            .collect();
+
         Some(Self {
             state,
             state_file,
             completed_set,
+            sync_map,
             max_retries: 3,
         })
     }
@@ -105,6 +128,36 @@ impl StateManager {
     /// Check if a directory has been fully completed via tar.
     pub fn is_dir_completed(&self, path: &str) -> bool {
         self.state.completed_dirs.iter().any(|d| d == path)
+    }
+
+    /// Delta sync: check if a remote file is unchanged since last sync.
+    /// Compares by file size only (fast, avoids mtime inconsistencies).
+    pub fn is_unchanged(&self, path: &str, remote_size: u64) -> bool {
+        if let Some(&last_size) = self.sync_map.get(path) {
+            last_size == remote_size
+        } else {
+            false
+        }
+    }
+
+    /// Update the sync record after a successful pull.
+    pub fn update_sync_record(&mut self, path: &str, size: u64, local_path: &str) {
+        // Update or insert into the sync map
+        self.sync_map.insert(path.to_string(), size);
+
+        // Update or insert into the persisted list
+        if let Some(existing) = self.state.synced_files.iter_mut().find(|r| r.path == path) {
+            existing.size = size;
+            existing.local_path = local_path.to_string();
+            existing.synced_at = Utc::now();
+        } else {
+            self.state.synced_files.push(SyncRecord {
+                path: path.to_string(),
+                size,
+                local_path: local_path.to_string(),
+                synced_at: Utc::now(),
+            });
+        }
     }
 
     /// Check if a file should be retried.

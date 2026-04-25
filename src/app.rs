@@ -10,6 +10,8 @@ use crate::adb::client::{AdbClient, DeviceInfo};
 use crate::scanner::{FileNode, Scanner};
 use crate::state::StateManager;
 use crate::transfer::engine::{TransferEngine, TransferProgress};
+use crate::tui::thumbnail::{ThumbnailCache, ThumbnailGrid};
+use std::time::Instant;
 
 /// The current view state of the application.
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +75,11 @@ pub struct App {
     // Status
     pub status_message: String,
     pub is_loading: bool,
+
+    // Preview
+    pub thumbnail_cache: ThumbnailCache,
+    pub preview_debounce: Option<Instant>,
+    pub current_preview: Option<(String, ThumbnailGrid)>,
 }
 
 impl App {
@@ -98,6 +105,9 @@ impl App {
             summary_scroll: 0,
             status_message: String::new(),
             is_loading: false,
+            thumbnail_cache: ThumbnailCache::new(),
+            preview_debounce: None,
+            current_preview: None,
         }
     }
 
@@ -220,11 +230,13 @@ impl App {
     pub fn browser_next(&mut self) {
         if !self.flat_tree.is_empty() {
             self.browser_index = (self.browser_index + 1).min(self.flat_tree.len() - 1);
+            self.preview_debounce = Some(Instant::now());
         }
     }
 
     pub fn browser_prev(&mut self) {
         self.browser_index = self.browser_index.saturating_sub(1);
+        self.preview_debounce = Some(Instant::now());
     }
 
     pub fn browser_toggle_expand(&mut self) {
@@ -442,6 +454,64 @@ impl App {
 
     pub fn summary_scroll_down(&mut self) {
         self.summary_scroll += 1;
+    }
+
+    // === Preview ===
+
+    pub fn update_preview(&mut self) {
+        if self.current_view != AppView::FileBrowser {
+            return;
+        }
+
+        if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
+            if flat_node.is_dir || !crate::tui::thumbnail::is_thumbnail_supported(&flat_node.name) {
+                self.current_preview = None;
+                return;
+            }
+
+            let path = flat_node.path.clone();
+
+            // Already previewing this file?
+            if let Some((ref current_path, _)) = self.current_preview {
+                if current_path == &path {
+                    return;
+                }
+            }
+
+            // Check debounce
+            if let Some(debounce) = self.preview_debounce {
+                if debounce.elapsed() < std::time::Duration::from_millis(300) {
+                    return;
+                }
+            } else {
+                // Initial load
+                self.preview_debounce = Some(Instant::now());
+                return;
+            }
+
+            // Clear debounce so we don't refetch continuously
+            self.preview_debounce = None;
+
+            // Check cache
+            if let Some(cached) = self.thumbnail_cache.get(&path) {
+                self.current_preview = cached.clone().map(|g| (path.clone(), g));
+                return;
+            }
+
+            // Fetch and decode
+            let raw_bytes = crate::tui::thumbnail::fetch_thumbnail_bytes(&self.adb_client, &path);
+            let grid = if let Some(bytes) = raw_bytes {
+                // Decode into a max 60x30 text cell grid
+                crate::tui::thumbnail::decode_to_grid(&bytes, 60, 30)
+            } else {
+                None
+            };
+
+            self.thumbnail_cache.insert(path.clone(), grid.clone());
+            self.current_preview = grid.map(|g| (path, g));
+        } else {
+            self.current_preview = None;
+        }
     }
 }
 

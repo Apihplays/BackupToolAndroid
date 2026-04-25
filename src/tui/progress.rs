@@ -54,6 +54,11 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
                 format!("{}", progress.skipped_files),
                 Style::default().fg(Color::Yellow).bold(),
             ),
+            Span::styled("  Delta: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", progress.delta_skipped),
+                Style::default().fg(Color::Rgb(100, 149, 237)).bold(), // cornflower blue
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Size:   ", Style::default().fg(Color::DarkGray)),
@@ -64,6 +69,11 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled(
                 format!(" / {}", format_bytes(progress.total_bytes)),
                 Style::default().fg(Color::DarkGray),
+            ),
+            Span::styled("   Workers: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", progress.active_workers),
+                Style::default().fg(Color::Magenta).bold(),
             ),
         ]),
         Line::from(vec![

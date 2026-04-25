@@ -224,8 +224,16 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App) {
     frame.render_stateful_widget(list, area, &mut state);
 }
 
-/// Render info panel showing selection stats.
+/// Render info panel showing selection stats and thumbnail preview.
 fn render_info_panel(frame: &mut Frame, area: Rect, app: &App) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Min(15),       // Stats panel
+            Constraint::Percentage(45), // Thumbnail preview
+        ])
+        .split(area);
+
     let selected_size = app.file_tree.as_ref()
         .map(|t| t.selected_total_size())
         .unwrap_or(0);
@@ -301,7 +309,14 @@ fn render_info_panel(frame: &mut Frame, area: Rect, app: &App) {
             .style(Style::default().bg(Color::Rgb(15, 15, 25))),
     );
 
-    frame.render_widget(info, area);
+    frame.render_widget(info, chunks[0]);
+
+    // Render thumbnail preview
+    if let Some((_, ref grid)) = app.current_preview {
+        crate::tui::thumbnail::render_thumbnail(frame, chunks[1], grid);
+    } else {
+        crate::tui::thumbnail::render_no_preview(frame, chunks[1]);
+    }
 }
 
 /// Get a file icon based on extension.
