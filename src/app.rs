@@ -415,6 +415,9 @@ impl App {
     pub fn cancel_transfer(&mut self) {
         if let Ok(mut progress) = self.transfer_progress.lock() {
             progress.is_cancelled = true;
+            if progress.end_time.is_none() {
+                progress.end_time = Some(std::time::Instant::now());
+            }
         }
     }
 

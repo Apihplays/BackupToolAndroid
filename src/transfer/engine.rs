@@ -25,6 +25,7 @@ pub struct TransferProgress {
     pub is_complete: bool,
     pub is_cancelled: bool,
     pub start_time: std::time::Instant,
+    pub end_time: Option<std::time::Instant>,
     pub active_workers: u8,
 }
 
@@ -44,13 +45,18 @@ impl TransferProgress {
             is_complete: false,
             is_cancelled: false,
             start_time: std::time::Instant::now(),
+            end_time: None,
             active_workers: 1,
         }
     }
 
     /// Calculate elapsed time.
     pub fn elapsed(&self) -> std::time::Duration {
-        self.start_time.elapsed()
+        if let Some(end) = self.end_time {
+            end.duration_since(self.start_time)
+        } else {
+            self.start_time.elapsed()
+        }
     }
 
     /// Estimate time remaining.
@@ -194,6 +200,7 @@ impl TransferEngine {
         {
             let mut progress = self.progress.lock().unwrap();
             progress.is_complete = true;
+            progress.end_time = Some(std::time::Instant::now());
             progress.update_speed();
         }
 
