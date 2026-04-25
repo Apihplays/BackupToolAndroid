@@ -53,6 +53,8 @@ pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut 
             match app.current_view {
                 AppView::DeviceSelect => browser::render_device_select(frame, chunks[1], app),
                 AppView::FileBrowser => browser::render_file_browser(frame, chunks[1], app),
+                AppView::FileBrowserSearch => browser::render_file_browser(frame, chunks[1], app),
+                AppView::DestinationBrowser => browser::render_destination_browser(frame, chunks[1], app),
                 AppView::Transferring => progress::render_progress(frame, chunks[1], app),
                 AppView::Summary => summary::render_summary(frame, chunks[1], app),
             }
@@ -68,6 +70,8 @@ pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut 
                     match app.current_view {
                         AppView::DeviceSelect => handle_device_select_input(app, key.code),
                         AppView::FileBrowser => handle_browser_input(app, key.code),
+                        AppView::FileBrowserSearch => handle_browser_search_input(app, key.code),
+                        AppView::DestinationBrowser => handle_destination_browser_input(app, key.code),
                         AppView::Transferring => handle_transfer_input(app, key.code),
                         AppView::Summary => handle_summary_input(app, key.code),
                     }
@@ -110,6 +114,46 @@ fn handle_browser_input(app: &mut App, key: KeyCode) {
         KeyCode::Char('r') => app.resume_transfer(),
         KeyCode::Char('f') => app.toggle_media_filter(),
         KeyCode::Char('b') | KeyCode::Backspace => app.browser_go_back(),
+        KeyCode::Char('/') => app.current_view = AppView::FileBrowserSearch,
+        KeyCode::Char('d') => {
+            app.load_local_browser();
+            app.current_view = AppView::DestinationBrowser;
+        }
+        _ => {}
+    }
+}
+
+fn handle_browser_search_input(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc | KeyCode::Enter => app.current_view = AppView::FileBrowser,
+        KeyCode::Backspace => {
+            app.search_query.pop();
+            // rebuild flat tree to reflect search removal
+            app.toggle_media_filter(); // toggle twice to force rebuild
+            app.toggle_media_filter();
+        }
+        KeyCode::Char(c) => {
+            app.search_query.push(c);
+            // force rebuild
+            app.toggle_media_filter();
+            app.toggle_media_filter();
+        }
+        _ => {}
+    }
+}
+
+fn handle_destination_browser_input(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') => app.current_view = AppView::FileBrowser,
+        KeyCode::Up | KeyCode::Char('k') => app.local_browser_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.local_browser_next(),
+        KeyCode::Enter => app.local_browser_enter(),
+        KeyCode::Backspace | KeyCode::Char('h') => {
+            if let Some(parent) = app.local_browser_path.parent() {
+                app.local_browser_path = parent.to_path_buf();
+                app.load_local_browser();
+            }
+        }
         _ => {}
     }
 }

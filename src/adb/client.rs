@@ -245,26 +245,73 @@ pub struct RemoteEntry {
 /// Parse a line of `ls -la` output into a RemoteEntry.
 fn parse_ls_line(line: &str, parent_path: &str) -> Option<RemoteEntry> {
     let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 7 {
+    if parts.len() < 6 {
         return None;
     }
 
     let perms = parts[0];
-    let is_dir = perms.starts_with('d');
-
-    // File size — for directories this might be weird, that's fine
-    let size = parts.iter()
-        .rev()
-        .find_map(|p| p.parse::<u64>().ok())
-        .unwrap_or(0);
-
-    // File name is the last part (may contain spaces, but we take last token for simplicity)
-    let name = parts.last()?.to_string();
-
-    // Skip symlink targets (entries containing ->)
-    if parts.contains(&"->") {
+    if perms.len() != 10 {
         return None;
     }
+    let is_dir = perms.starts_with('d');
+    let is_link = perms.starts_with('l');
+
+    // Skip symlinks to avoid complexity with target resolution
+    if is_link {
+        return None;
+    }
+
+    let mut date_idx = 0;
+    let mut name_idx = 0;
+
+    for (i, part) in parts.iter().enumerate() {
+        if i < 3 { continue; }
+        
+        // Match YYYY-MM-DD
+        if part.len() == 10 && part.chars().filter(|c| *c == '-').count() == 2 {
+            date_idx = i;
+            name_idx = i + 2;
+            break;
+        }
+        
+        // Match Month (Jan, Feb, etc)
+        if ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].contains(part) {
+            date_idx = i;
+            name_idx = i + 3;
+            break;
+        }
+    }
+
+    if date_idx == 0 || name_idx >= parts.len() {
+        if parts[1].parse::<u32>().is_ok() {
+            date_idx = 5;
+            name_idx = std::cmp::min(7, parts.len() - 1);
+        } else {
+            date_idx = 4;
+            name_idx = std::cmp::min(6, parts.len() - 1);
+        }
+    }
+
+    let size_str = parts.get(date_idx.saturating_sub(1)).unwrap_or(&"0");
+    let size = size_str.parse::<u64>().unwrap_or(0);
+
+    let mut name_start = 0;
+    let mut current_pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if let Some(pos) = line[current_pos..].find(part) {
+            if i == name_idx {
+                name_start = current_pos + pos;
+                break;
+            }
+            current_pos += pos + part.len();
+        }
+    }
+    
+    let name = if name_start > 0 {
+        line[name_start..].to_string()
+    } else {
+        parts[name_idx..].join(" ")
+    };
 
     let path = if parent_path.ends_with('/') {
         format!("{}{}", parent_path, name)

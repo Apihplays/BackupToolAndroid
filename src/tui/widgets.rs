@@ -12,6 +12,8 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &App) {
             match app.current_view {
                 AppView::DeviceSelect => " 📱 Select Device ",
                 AppView::FileBrowser => " 📂 Browse Files ",
+                AppView::FileBrowserSearch => " 🔍 Search Files ",
+                AppView::DestinationBrowser => " 📁 Select Destination ",
                 AppView::Transferring => " 🚀 Transferring ",
                 AppView::Summary => " 📊 Summary ",
             },
@@ -33,6 +35,8 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let help_text = match app.current_view {
         AppView::DeviceSelect => "↑↓ Navigate │ Enter Select │ r Refresh │ q Quit",
         AppView::FileBrowser => "↑↓ Navigate │ Space Select │ Enter Expand │ a All │ n None │ f Filter │ s Start │ r Resume │ q Quit",
+        AppView::FileBrowserSearch => "Type to search │ Enter/Esc Cancel",
+        AppView::DestinationBrowser => "↑↓ Navigate │ Enter Select │ Backspace Up │ q Quit",
         AppView::Transferring => "c Cancel │ q Quit",
         AppView::Summary => "↑↓ Scroll │ b Back │ q Quit",
     };

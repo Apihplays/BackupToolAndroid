@@ -2,6 +2,9 @@
 
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::path::PathBuf;
+use std::fs;
+use glob::Pattern;
 
 use crate::adb::client::{AdbClient, DeviceInfo};
 use crate::scanner::{FileNode, Scanner};
@@ -13,6 +16,8 @@ use crate::transfer::engine::{TransferEngine, TransferProgress};
 pub enum AppView {
     DeviceSelect,
     FileBrowser,
+    FileBrowserSearch,
+    DestinationBrowser,
     Transferring,
     Summary,
 }
@@ -49,7 +54,13 @@ pub struct App {
     pub flat_tree: Vec<FlatNode>,
     pub browser_index: usize,
     pub media_filter: bool,
+    pub search_query: String,
     pub destination: String,
+
+    // Local Destination Browser
+    pub local_browser_path: PathBuf,
+    pub local_browser_items: Vec<String>,
+    pub local_browser_index: usize,
 
     // Transfer
     pub transfer_engine: Option<TransferEngine>,
@@ -76,7 +87,11 @@ impl App {
             flat_tree: Vec::new(),
             browser_index: 0,
             media_filter: false,
-            destination,
+            search_query: String::new(),
+            destination: destination.clone(),
+            local_browser_path: PathBuf::from(destination),
+            local_browser_items: Vec::new(),
+            local_browser_index: 0,
             transfer_engine: None,
             transfer_progress: Arc::new(Mutex::new(TransferProgress::new(0, 0))),
             transfer_thread: None,
@@ -163,8 +178,24 @@ impl App {
         self.flat_tree.clear();
         if let Some(ref tree) = self.file_tree {
             let visible = tree.flatten_visible(self.media_filter);
-            self.flat_tree = visible
-                .iter()
+            
+            let filtered: Vec<_> = if !self.search_query.is_empty() {
+                let pattern = Pattern::new(&self.search_query);
+                let query_lower = self.search_query.to_lowercase();
+                
+                visible.into_iter().filter(|node| {
+                    if let Ok(ref pat) = pattern {
+                        pat.matches(&node.name)
+                    } else {
+                        node.name.to_lowercase().contains(&query_lower)
+                    }
+                }).collect()
+            } else {
+                visible
+            };
+
+            self.flat_tree = filtered
+                .into_iter()
                 .map(|node| FlatNode {
                     name: node.name.clone(),
                     path: node.path.clone(),
@@ -248,6 +279,66 @@ impl App {
     pub fn toggle_media_filter(&mut self) {
         self.media_filter = !self.media_filter;
         self.rebuild_flat_tree();
+    }
+
+    // === Local Destination Browser ===
+
+    pub fn load_local_browser(&mut self) {
+        self.local_browser_items.clear();
+        self.local_browser_index = 0;
+        
+        self.local_browser_items.push("[Select Current Directory]".to_string());
+        self.local_browser_items.push("..".to_string());
+
+        if let Ok(entries) = fs::read_dir(&self.local_browser_path) {
+            let mut dirs = Vec::new();
+            for entry in entries.flatten() {
+                if let Ok(file_type) = entry.file_type() {
+                    if file_type.is_dir() {
+                        if let Ok(name) = entry.file_name().into_string() {
+                            dirs.push(name);
+                        }
+                    }
+                }
+            }
+            dirs.sort_unstable();
+            self.local_browser_items.extend(dirs);
+        }
+    }
+
+    pub fn local_browser_next(&mut self) {
+        if !self.local_browser_items.is_empty() {
+            self.local_browser_index = (self.local_browser_index + 1) % self.local_browser_items.len();
+        }
+    }
+
+    pub fn local_browser_prev(&mut self) {
+        if !self.local_browser_items.is_empty() {
+            self.local_browser_index = if self.local_browser_index == 0 {
+                self.local_browser_items.len() - 1
+            } else {
+                self.local_browser_index - 1
+            };
+        }
+    }
+
+    pub fn local_browser_enter(&mut self) {
+        if self.local_browser_items.is_empty() {
+            return;
+        }
+        let selected = &self.local_browser_items[self.local_browser_index];
+        if selected == "[Select Current Directory]" {
+            self.destination = self.local_browser_path.to_string_lossy().into_owned();
+            self.current_view = AppView::FileBrowser;
+        } else if selected == ".." {
+            if let Some(parent) = self.local_browser_path.parent() {
+                self.local_browser_path = parent.to_path_buf();
+                self.load_local_browser();
+            }
+        } else {
+            self.local_browser_path.push(selected);
+            self.load_local_browser();
+        }
     }
 
     // === Transfer ===
