@@ -5,7 +5,7 @@ use std::thread;
 use crate::adb::client::{AdbClient, DeviceInfo};
 use crate::error::AppResult;
 use crate::state::StateManager;
-use crate::transfer::engine::TransferProgress;
+use crate::transfer::engine::{TransferProgress, TransferDirection};
 use crate::transfer::recv::RecvPuller;
 
 /// A file job to be pulled by a worker.
@@ -42,9 +42,10 @@ impl WorkerPool {
         &self,
         device: &DeviceInfo,
         jobs: Vec<FileJob>,
-        destination: &str,
+        _destination: &str,
         progress: &Arc<Mutex<TransferProgress>>,
         state_manager: &Arc<Mutex<StateManager>>,
+        direction: TransferDirection,
     ) -> AppResult<()> {
         if jobs.is_empty() {
             return Ok(());
@@ -68,7 +69,6 @@ impl WorkerPool {
             let progress = Arc::clone(progress);
             let state_manager = Arc::clone(state_manager);
             let device = device.clone();
-            let destination = destination.to_string();
 
             let handle = thread::spawn(move || {
                 // Each worker gets its own ADB client connection
@@ -101,13 +101,24 @@ impl WorkerPool {
                         p.current_file = job.name.clone();
                     }
 
-                    // Ensure parent directory exists
-                    if let Some(parent) = Path::new(&job.local_path).parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
+                    // Transfer the file
+                    let transfer_result = match direction {
+                        TransferDirection::Pull => {
+                            if let Some(parent) = Path::new(&job.local_path).parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            RecvPuller::pull_file(&client, &job.remote_path, &job.local_path)
+                        }
+                        TransferDirection::Push => {
+                            if let Some(pos) = job.remote_path.rfind('/') {
+                                let dir = &job.remote_path[..pos];
+                                let _ = client.shell_command(&format!("mkdir -p '{}'", dir));
+                            }
+                            client.push_file(&job.local_path, &job.remote_path).map(|_| job.size)
+                        }
+                    };
 
-                    // Pull the file
-                    match RecvPuller::pull_file(&client, &job.remote_path, &job.local_path) {
+                    match transfer_result {
                         Ok(bytes) => {
                             let mut p = progress.lock().unwrap();
                             p.completed_files += 1;

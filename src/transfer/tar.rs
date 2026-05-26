@@ -53,7 +53,7 @@ impl TarPuller {
 
         {
             let mut tar_file = BufWriter::new(
-                std::fs::File::create(&tar_temp).map_err(|e| AppError::Io(e))?
+                std::fs::File::create(&tar_temp).map_err(AppError::Io)?
             );
 
             let mut reader = std::io::BufReader::new(stdout);

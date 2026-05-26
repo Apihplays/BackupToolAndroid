@@ -25,7 +25,7 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
     let elapsed = format_duration(progress.elapsed());
     let eta = progress
         .eta()
-        .map(|d| format_duration(d))
+        .map(format_duration)
         .unwrap_or_else(|| "calculating...".into());
 
     let stats = Paragraph::new(vec![

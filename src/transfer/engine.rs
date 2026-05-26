@@ -1,13 +1,20 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::adb::client::{AdbClient, DeviceInfo};
+use crate::adb::client::AdbClient;
 use crate::error::{AppError, AppResult};
 use crate::scanner::FileNode;
 use crate::state::StateManager;
 use crate::transfer::tar::TarPuller;
 use crate::transfer::recv::RecvPuller;
 use crate::transfer::pool::{WorkerPool, FileJob};
+
+/// Direction of the transfer.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TransferDirection {
+    Pull,
+    Push,
+}
 
 /// Progress information for a running transfer.
 #[derive(Debug, Clone)]
@@ -106,9 +113,11 @@ impl TransferEngine {
         root: &FileNode,
         destination: &str,
         state_manager: &mut StateManager,
+        direction: TransferDirection,
     ) -> AppResult<()> {
         let selected_files = root.selected_files();
         let selected_dirs = root.selected_dirs();
+        let _total_size: u64 = selected_files.iter().map(|f| f.size).sum();
 
         if selected_files.is_empty() && selected_dirs.is_empty() {
             return Ok(());
@@ -124,15 +133,17 @@ impl TransferEngine {
         }
 
         // Create destination directory
-        std::fs::create_dir_all(destination)
-            .map_err(|e| AppError::Io(e))?;
+        if direction == TransferDirection::Pull {
+            std::fs::create_dir_all(destination)
+                .map_err(AppError::Io)?;
+        }
 
         // Check if we can use tar streaming for entire selected directories
         let has_tar = crate::adb::shell::ShellExecutor::has_tar(client);
 
         // Auto-detect worker count from device connection type
         let pool = client.selected_device.as_ref()
-            .map(|d| WorkerPool::auto_detect(d))
+            .map(WorkerPool::auto_detect)
             .unwrap_or_else(|| WorkerPool::new(1));
 
         // Process selected directories
@@ -148,7 +159,7 @@ impl TransferEngine {
             let relative = dir_node.path.trim_start_matches("/sdcard/");
             let local_dir = Path::new(destination).join(relative);
 
-            if has_tar {
+            if has_tar && direction == TransferDirection::Pull {
                 // Use tar streaming for entire directory
                 match TarPuller::pull_dir(client, &dir_node.path, local_dir.to_str().unwrap_or(""), &self.progress) {
                     Ok(stats) => {
@@ -168,7 +179,7 @@ impl TransferEngine {
 
                         let files = dir_node.selected_files();
                         self.pull_files_concurrent(
-                            client, &pool, &files, destination, state_manager,
+                            client, &pool, &files, destination, state_manager, direction,
                         )?;
                     }
                 }
@@ -176,7 +187,7 @@ impl TransferEngine {
                 // No tar available, pull files concurrently
                 let files = dir_node.selected_files();
                 self.pull_files_concurrent(
-                    client, &pool, &files, destination, state_manager,
+                    client, &pool, &files, destination, state_manager, direction,
                 )?;
             }
         }
@@ -192,7 +203,7 @@ impl TransferEngine {
 
         if !standalone_files.is_empty() {
             self.pull_files_concurrent(
-                client, &pool, &standalone_files, destination, state_manager,
+                client, &pool, &standalone_files, destination, state_manager, direction,
             )?;
         }
 
@@ -215,55 +226,75 @@ impl TransferEngine {
     fn pull_files_concurrent(
         &self,
         client: &AdbClient,
-        pool: &WorkerPool,
+        _pool: &WorkerPool,
         files: &[&FileNode],
         destination: &str,
         state_manager: &mut StateManager,
+        direction: TransferDirection,
     ) -> AppResult<()> {
         let device = match client.selected_device.as_ref() {
             Some(d) => d.clone(),
-            None => return self.pull_files_individually(client, files, destination, state_manager),
+            None => return self.pull_files_individually(client, files, destination, state_manager, direction),
         };
 
         // Pre-filter: handle resume skips and delta skips before dispatching
         let mut jobs = Vec::with_capacity(files.len());
 
-        for file_node in files {
+        for file in files {
             // Check if already completed (resume)
-            if state_manager.is_completed(&file_node.path) {
+            if state_manager.is_completed(&file.path) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.skipped_files += 1;
                 progress.completed_files += 1;
-                progress.transferred_bytes += file_node.size;
+                progress.transferred_bytes += file.size;
                 progress.update_speed();
                 continue;
             }
 
+            let rel_path = file.path.trim_start_matches('/');
+            let rel_path = rel_path.trim_start_matches('\\');
+
+            let (local_path, remote_path) = match direction {
+                TransferDirection::Pull => {
+                    let local_p = std::path::Path::new(destination).join(rel_path);
+                    (local_p.to_string_lossy().into_owned(), file.path.clone())
+                }
+                TransferDirection::Push => {
+                    let mut remote_p = destination.to_string();
+                    if !remote_p.ends_with('/') {
+                        remote_p.push('/');
+                    }
+                    let remote_rel = rel_path.replace("\\", "/");
+                    remote_p.push_str(&remote_rel);
+                    (file.path.clone(), remote_p)
+                }
+            };
+
             // Delta sync: check if file is unchanged since last sync
-            if state_manager.is_unchanged(&file_node.path, file_node.size) {
+            let state_key = if direction == TransferDirection::Pull { &remote_path } else { &local_path };
+            if state_manager.is_unchanged(state_key, file.size) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.delta_skipped += 1;
+                progress.skipped_files += 1;
                 progress.completed_files += 1;
-                progress.transferred_bytes += file_node.size;
+                progress.transferred_bytes += file.size;
                 progress.update_speed();
                 continue;
             }
 
             // Build job for worker pool
-            let relative = file_node.path.trim_start_matches("/sdcard/");
-            let local_path = Path::new(destination).join(relative);
-
-            // Ensure parent directory exists
-            if let Some(parent) = local_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
+            if direction == TransferDirection::Pull {
+                if let Some(parent) = std::path::Path::new(&local_path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
             }
 
             jobs.push(FileJob {
-                remote_path: file_node.path.clone(),
-                local_path: local_path.to_string_lossy().to_string(),
-                name: file_node.name.clone(),
-                size: file_node.size,
-                mtime: file_node.mtime,
+                remote_path,
+                local_path,
+                name: file.name.clone(),
+                size: file.size,
+                mtime: file.mtime,
             });
         }
 
@@ -277,7 +308,8 @@ impl TransferEngine {
             StateManager::new("", destination),
         )));
 
-        pool.execute(&device, jobs, destination, &self.progress, &shared_state)?;
+        let pool = WorkerPool::auto_detect(client.selected_device.as_ref().unwrap());
+        pool.execute(&device, jobs, destination, &self.progress, &shared_state, direction)?;
 
         // Move state manager back out
         let recovered = Arc::try_unwrap(shared_state)
@@ -297,6 +329,7 @@ impl TransferEngine {
         files: &[&FileNode],
         destination: &str,
         state_manager: &mut StateManager,
+        _direction: TransferDirection,
     ) -> AppResult<()> {
         for file_node in files {
             let is_cancelled = {
@@ -375,7 +408,7 @@ impl TransferEngine {
 
             // Auto-save state periodically (every 50 files)
             let completed = self.progress.lock().unwrap().completed_files;
-            if completed % 50 == 0 {
+            if completed.is_multiple_of(50) {
                 let _ = state_manager.save();
             }
         }

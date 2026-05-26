@@ -2,16 +2,20 @@
 
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::path::PathBuf;
-use std::fs;
 use glob::Pattern;
 
 use crate::adb::client::{AdbClient, DeviceInfo};
-use crate::scanner::{FileNode, Scanner};
+use crate::scanner::{FileNode, Scanner, LocalScanner};
 use crate::state::StateManager;
-use crate::transfer::engine::{TransferEngine, TransferProgress};
+use crate::transfer::engine::{TransferEngine, TransferProgress, TransferDirection};
 use crate::tui::thumbnail::{ThumbnailCache, ThumbnailGrid};
 use std::time::Instant;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Pane {
+    Left,  // Android
+    Right, // PC
+}
 
 /// The current view state of the application.
 #[derive(Debug, Clone, PartialEq)]
@@ -51,18 +55,22 @@ pub struct App {
     pub devices: Vec<DeviceInfo>,
     pub device_list_index: usize,
 
-    // File browser
+    pub active_pane: Pane,
+
+    // File browser (Android)
     pub file_tree: Option<FileNode>,
     pub flat_tree: Vec<FlatNode>,
     pub browser_index: usize,
+    
+    // File browser (Local PC)
+    pub local_tree: Option<FileNode>,
+    pub local_flat_tree: Vec<FlatNode>,
+    pub local_browser_index: usize,
+
+    // Shared filters
     pub media_filter: bool,
     pub search_query: String,
     pub destination: String,
-
-    // Local Destination Browser
-    pub local_browser_path: PathBuf,
-    pub local_browser_items: Vec<String>,
-    pub local_browser_index: usize,
 
     // Transfer
     pub transfer_engine: Option<TransferEngine>,
@@ -90,15 +98,16 @@ impl App {
             adb_client: AdbClient::new(),
             devices: Vec::new(),
             device_list_index: 0,
+            active_pane: Pane::Left,
             file_tree: None,
             flat_tree: Vec::new(),
             browser_index: 0,
+            local_tree: None,
+            local_flat_tree: Vec::new(),
+            local_browser_index: 0,
             media_filter: false,
             search_query: String::new(),
             destination: destination.clone(),
-            local_browser_path: PathBuf::from(destination),
-            local_browser_items: Vec::new(),
-            local_browser_index: 0,
             transfer_engine: None,
             transfer_progress: Arc::new(Mutex::new(TransferProgress::new(0, 0))),
             transfer_thread: None,
@@ -160,10 +169,23 @@ impl App {
             self.adb_client.select_device(device);
             self.current_view = AppView::FileBrowser;
             self.load_file_tree();
+            self.load_local_tree();
         }
     }
 
-    // === File Browser ===
+    // === File Browser (Dual Pane) ===
+
+    fn load_local_tree(&mut self) {
+        match LocalScanner::build_tree(&self.destination) {
+            Ok(tree) => {
+                self.local_tree = Some(tree);
+                self.rebuild_local_flat_tree();
+            }
+            Err(e) => {
+                self.status_message = format!("Error loading local tree: {}", e);
+            }
+        }
+    }
 
     fn load_file_tree(&mut self) {
         self.is_loading = true;
@@ -227,61 +249,191 @@ impl App {
         }
     }
 
+    fn rebuild_local_flat_tree(&mut self) {
+        self.local_flat_tree.clear();
+        if let Some(ref tree) = self.local_tree {
+            let visible = tree.flatten_visible(self.media_filter);
+            
+            let filtered: Vec<_> = if !self.search_query.is_empty() {
+                let pattern = Pattern::new(&self.search_query);
+                let query_lower = self.search_query.to_lowercase();
+                
+                visible.into_iter().filter(|node| {
+                    if let Ok(ref pat) = pattern {
+                        pat.matches(&node.name)
+                    } else {
+                        node.name.to_lowercase().contains(&query_lower)
+                    }
+                }).collect()
+            } else {
+                visible
+            };
+
+            self.local_flat_tree = filtered
+                .into_iter()
+                .map(|node| FlatNode {
+                    name: node.name.clone(),
+                    path: node.path.clone(),
+                    is_dir: node.is_dir,
+                    size: node.size,
+                    total_size: node.total_size,
+                    selected: node.selected,
+                    expanded: node.expanded,
+                    depth: node.depth,
+                    file_count: node.file_count,
+                    tree_index: Vec::new(),
+                })
+                .collect();
+        }
+
+        if self.local_browser_index >= self.local_flat_tree.len() {
+            self.local_browser_index = self.local_flat_tree.len().saturating_sub(1);
+        }
+    }
+
     pub fn browser_next(&mut self) {
-        if !self.flat_tree.is_empty() {
-            self.browser_index = (self.browser_index + 1).min(self.flat_tree.len() - 1);
-            self.preview_debounce = Some(Instant::now());
+        match self.active_pane {
+            Pane::Left => {
+                if !self.flat_tree.is_empty() {
+                    self.browser_index = (self.browser_index + 1).min(self.flat_tree.len() - 1);
+                    self.preview_debounce = Some(Instant::now());
+                }
+            }
+            Pane::Right => {
+                if !self.local_flat_tree.is_empty() {
+                    self.local_browser_index = (self.local_browser_index + 1).min(self.local_flat_tree.len() - 1);
+                    self.preview_debounce = Some(Instant::now());
+                }
+            }
         }
     }
 
     pub fn browser_prev(&mut self) {
-        self.browser_index = self.browser_index.saturating_sub(1);
-        self.preview_debounce = Some(Instant::now());
+        match self.active_pane {
+            Pane::Left => {
+                self.browser_index = self.browser_index.saturating_sub(1);
+                self.preview_debounce = Some(Instant::now());
+            }
+            Pane::Right => {
+                self.local_browser_index = self.local_browser_index.saturating_sub(1);
+                self.preview_debounce = Some(Instant::now());
+            }
+        }
     }
 
     pub fn browser_toggle_expand(&mut self) {
-        if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
-            if flat_node.is_dir {
-                let path = flat_node.path.clone();
-                if let Some(ref mut tree) = self.file_tree {
-                    if let Some(node) = find_node_mut(tree, &path) {
-                        if !node.loaded {
-                            // Lazy-load children
-                            let _ = Scanner::load_children(&self.adb_client, node);
+        match self.active_pane {
+            Pane::Left => {
+                if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
+                    if flat_node.is_dir {
+                        let path = flat_node.path.clone();
+                        if let Some(ref mut tree) = self.file_tree {
+                            if let Some(node) = find_node_mut(tree, &path) {
+                                if !node.loaded {
+                                    let _ = Scanner::load_children(&self.adb_client, node);
+                                }
+                                node.expanded = !node.expanded;
+                            }
                         }
-                        node.expanded = !node.expanded;
+                        self.rebuild_flat_tree();
                     }
                 }
-                self.rebuild_flat_tree();
+            }
+            Pane::Right => {
+                if let Some(flat_node) = self.local_flat_tree.get(self.local_browser_index) {
+                    if flat_node.is_dir {
+                        let path = flat_node.path.clone();
+                        if let Some(ref mut tree) = self.local_tree {
+                            if path == ".." && flat_node.name == ".." {
+                                // Navigate up
+                                let current = std::path::PathBuf::from(&self.destination);
+                                if let Some(parent) = current.parent() {
+                                    self.destination = parent.to_string_lossy().to_string();
+                                    self.load_local_tree();
+                                }
+                            } else if let Some(node) = find_node_mut(tree, &path) {
+                                if !node.loaded {
+                                    let _ = LocalScanner::load_children(node);
+                                }
+                                node.expanded = !node.expanded;
+                            }
+                        }
+                        self.rebuild_local_flat_tree();
+                    }
+                }
             }
         }
     }
 
     pub fn browser_toggle_select(&mut self) {
-        if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
-            let path = flat_node.path.clone();
-            if let Some(ref mut tree) = self.file_tree {
-                if let Some(node) = find_node_mut(tree, &path) {
-                    let new_selected = !node.selected;
-                    node.set_selected_recursive(new_selected);
+        match self.active_pane {
+            Pane::Left => {
+                if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
+                    let path = flat_node.path.clone();
+                    if let Some(ref mut tree) = self.file_tree {
+                        if let Some(node) = find_node_mut(tree, &path) {
+                            let new_selected = !node.selected;
+                            node.set_selected_recursive(new_selected);
+                        }
+                    }
+                    self.rebuild_flat_tree();
                 }
             }
-            self.rebuild_flat_tree();
+            Pane::Right => {
+                if let Some(flat_node) = self.local_flat_tree.get(self.local_browser_index) {
+                    let path = flat_node.path.clone();
+                    if let Some(ref mut tree) = self.local_tree {
+                        if let Some(node) = find_node_mut(tree, &path) {
+                            let new_selected = !node.selected;
+                            node.set_selected_recursive(new_selected);
+                        }
+                    }
+                    self.rebuild_local_flat_tree();
+                }
+            }
         }
     }
 
     pub fn browser_select_all(&mut self) {
-        if let Some(ref mut tree) = self.file_tree {
-            tree.set_selected_recursive(true);
+        match self.active_pane {
+            Pane::Left => {
+                if let Some(ref mut tree) = self.file_tree {
+                    tree.set_selected_recursive(true);
+                }
+                self.rebuild_flat_tree();
+            }
+            Pane::Right => {
+                if let Some(ref mut tree) = self.local_tree {
+                    tree.set_selected_recursive(true);
+                }
+                self.rebuild_local_flat_tree();
+            }
         }
-        self.rebuild_flat_tree();
     }
 
     pub fn browser_select_none(&mut self) {
-        if let Some(ref mut tree) = self.file_tree {
-            tree.set_selected_recursive(false);
+        match self.active_pane {
+            Pane::Left => {
+                if let Some(ref mut tree) = self.file_tree {
+                    tree.set_selected_recursive(false);
+                }
+                self.rebuild_flat_tree();
+            }
+            Pane::Right => {
+                if let Some(ref mut tree) = self.local_tree {
+                    tree.set_selected_recursive(false);
+                }
+                self.rebuild_local_flat_tree();
+            }
         }
-        self.rebuild_flat_tree();
+    }
+
+    pub fn toggle_pane(&mut self) {
+        self.active_pane = match self.active_pane {
+            Pane::Left => Pane::Right,
+            Pane::Right => Pane::Left,
+        };
+        self.preview_debounce = Some(Instant::now());
     }
 
     pub fn browser_go_back(&mut self) {
@@ -291,92 +443,40 @@ impl App {
     pub fn toggle_media_filter(&mut self) {
         self.media_filter = !self.media_filter;
         self.rebuild_flat_tree();
+        self.rebuild_local_flat_tree();
     }
 
-    // === Local Destination Browser ===
-
-    pub fn load_local_browser(&mut self) {
-        self.local_browser_items.clear();
-        self.local_browser_index = 0;
-        
-        self.local_browser_items.push("[Select Current Directory]".to_string());
-        self.local_browser_items.push("..".to_string());
-
-        if let Ok(entries) = fs::read_dir(&self.local_browser_path) {
-            let mut dirs = Vec::new();
-            for entry in entries.flatten() {
-                if let Ok(file_type) = entry.file_type() {
-                    if file_type.is_dir() {
-                        if let Ok(name) = entry.file_name().into_string() {
-                            dirs.push(name);
-                        }
-                    }
-                }
-            }
-            dirs.sort_unstable();
-            self.local_browser_items.extend(dirs);
-        }
-    }
-
-    pub fn local_browser_next(&mut self) {
-        if !self.local_browser_items.is_empty() {
-            self.local_browser_index = (self.local_browser_index + 1) % self.local_browser_items.len();
-        }
-    }
-
-    pub fn local_browser_prev(&mut self) {
-        if !self.local_browser_items.is_empty() {
-            self.local_browser_index = if self.local_browser_index == 0 {
-                self.local_browser_items.len() - 1
-            } else {
-                self.local_browser_index - 1
-            };
-        }
-    }
-
-    pub fn local_browser_enter(&mut self) {
-        if self.local_browser_items.is_empty() {
-            return;
-        }
-        let selected = &self.local_browser_items[self.local_browser_index];
-        if selected == "[Select Current Directory]" {
-            self.destination = self.local_browser_path.to_string_lossy().into_owned();
-            self.current_view = AppView::FileBrowser;
-        } else if selected == ".." {
-            if let Some(parent) = self.local_browser_path.parent() {
-                self.local_browser_path = parent.to_path_buf();
-                self.load_local_browser();
-            }
-        } else {
-            self.local_browser_path.push(selected);
-            self.load_local_browser();
-        }
-    }
-
-    // === Transfer ===
+    // === Transfer & File Operations ===
 
     pub fn start_transfer(&mut self) {
-        let selected_count = self.file_tree.as_ref()
-            .map(|t| t.selected_file_count())
-            .unwrap_or(0);
-
-        if selected_count == 0 {
-            self.status_message = "No files selected!".into();
-            return;
-        }
+        let (tree, direction) = match self.active_pane {
+            Pane::Left => {
+                let selected_count = self.file_tree.as_ref().map(|t| t.selected_file_count()).unwrap_or(0);
+                if selected_count == 0 {
+                    self.status_message = "No remote files selected to pull!".into();
+                    return;
+                }
+                (self.file_tree.clone().unwrap(), TransferDirection::Pull)
+            }
+            Pane::Right => {
+                let selected_count = self.local_tree.as_ref().map(|t| t.selected_file_count()).unwrap_or(0);
+                if selected_count == 0 {
+                    self.status_message = "No local files selected to push!".into();
+                    return;
+                }
+                (self.local_tree.clone().unwrap(), TransferDirection::Push)
+            }
+        };
 
         self.current_view = AppView::Transferring;
 
         let engine = TransferEngine::new();
         self.transfer_progress = engine.progress.clone();
 
-        // Clone what we need for the transfer thread
-        let tree = self.file_tree.clone().unwrap();
         let destination = self.destination.clone();
         let progress = engine.progress.clone();
         let adb_client = AdbClient::new();
 
-        // Copy device selection to new client
         if let Some(ref device) = self.adb_client.selected_device {
             let mut client = adb_client;
             client.select_device(device.clone());
@@ -385,10 +485,11 @@ impl App {
                 let mut state_manager = StateManager::new(&tree.path, &destination);
                 let engine = TransferEngine { progress };
 
-                if let Err(e) = engine.execute(&client, &tree, &destination, &mut state_manager) {
+                if let Err(e) = engine.execute(&client, &tree, &destination, &mut state_manager, direction) {
                     let mut p = engine.progress.lock().unwrap();
                     p.errors.push(("FATAL".into(), e.to_string()));
                     p.is_complete = true;
+                    p.end_time = Some(std::time::Instant::now());
                 }
             });
 
@@ -396,6 +497,55 @@ impl App {
         }
 
         self.transfer_engine = Some(engine);
+    }
+
+    pub fn delete_selected(&mut self) {
+        match self.active_pane {
+            Pane::Left => {
+                if let Some(ref tree) = self.file_tree {
+                    let files = tree.selected_files();
+                    let dirs = tree.selected_dirs();
+                    if files.is_empty() && dirs.is_empty() {
+                        self.status_message = "No remote files selected to delete!".into();
+                        return;
+                    }
+                    
+                    self.status_message = format!("Deleting {} items from device...", files.len() + dirs.len());
+                    
+                    for f in files.iter().chain(dirs.iter()) {
+                        let _ = self.adb_client.rm_remote(&f.path);
+                    }
+                    
+                    self.status_message = "Remote deletion complete.".into();
+                }
+                self.load_file_tree();
+            }
+            Pane::Right => {
+                if let Some(ref tree) = self.local_tree {
+                    let files = tree.selected_files();
+                    let dirs = tree.selected_dirs();
+                    if files.is_empty() && dirs.is_empty() {
+                        self.status_message = "No local files selected to delete!".into();
+                        return;
+                    }
+
+                    self.status_message = format!("Deleting {} items locally...", files.len() + dirs.len());
+
+                    for f in files {
+                        let _ = std::fs::remove_file(&f.path);
+                    }
+                    // Sort dirs by depth descending to delete children before parents
+                    let mut sorted_dirs: Vec<_> = dirs.into_iter().collect();
+                    sorted_dirs.sort_by_key(|b| std::cmp::Reverse(b.depth));
+                    for d in sorted_dirs {
+                        let _ = std::fs::remove_dir_all(&d.path);
+                    }
+
+                    self.status_message = "Local deletion complete.".into();
+                }
+                self.load_local_tree();
+            }
+        }
     }
 
     pub fn resume_transfer(&mut self) {
@@ -466,7 +616,12 @@ impl App {
             return;
         }
 
-        if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
+        let flat_node = match self.active_pane {
+            Pane::Left => self.flat_tree.get(self.browser_index),
+            Pane::Right => self.local_flat_tree.get(self.local_browser_index),
+        };
+
+        if let Some(flat_node) = flat_node {
             if flat_node.is_dir || !crate::tui::thumbnail::is_thumbnail_supported(&flat_node.name) {
                 self.current_preview = None;
                 return;
@@ -474,37 +629,34 @@ impl App {
 
             let path = flat_node.path.clone();
 
-            // Already previewing this file?
             if let Some((ref current_path, _)) = self.current_preview {
                 if current_path == &path {
                     return;
                 }
             }
 
-            // Check debounce
             if let Some(debounce) = self.preview_debounce {
                 if debounce.elapsed() < std::time::Duration::from_millis(300) {
                     return;
                 }
             } else {
-                // Initial load
                 self.preview_debounce = Some(Instant::now());
                 return;
             }
 
-            // Clear debounce so we don't refetch continuously
             self.preview_debounce = None;
 
-            // Check cache
             if let Some(cached) = self.thumbnail_cache.get(&path) {
                 self.current_preview = cached.clone().map(|g| (path.clone(), g));
                 return;
             }
 
-            // Fetch and decode
-            let raw_bytes = crate::tui::thumbnail::fetch_thumbnail_bytes(&self.adb_client, &path);
+            let raw_bytes = match self.active_pane {
+                Pane::Left => crate::tui::thumbnail::fetch_thumbnail_bytes(&self.adb_client, &path),
+                Pane::Right => std::fs::read(&path).ok(),
+            };
+
             let grid = if let Some(bytes) = raw_bytes {
-                // Decode into a max 60x30 text cell grid
                 crate::tui::thumbnail::decode_to_grid(&bytes, 60, 30)
             } else {
                 None

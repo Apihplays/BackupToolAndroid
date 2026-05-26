@@ -118,10 +118,8 @@ fn handle_browser_input(app: &mut App, key: KeyCode) {
         KeyCode::Char('f') => app.toggle_media_filter(),
         KeyCode::Char('b') | KeyCode::Backspace => app.browser_go_back(),
         KeyCode::Char('/') => app.current_view = AppView::FileBrowserSearch,
-        KeyCode::Char('d') => {
-            app.load_local_browser();
-            app.current_view = AppView::DestinationBrowser;
-        }
+        KeyCode::Tab => app.toggle_pane(),
+        KeyCode::Delete | KeyCode::Char('x') => app.delete_selected(),
         _ => {}
     }
 }
@@ -131,13 +129,11 @@ fn handle_browser_search_input(app: &mut App, key: KeyCode) {
         KeyCode::Esc | KeyCode::Enter => app.current_view = AppView::FileBrowser,
         KeyCode::Backspace => {
             app.search_query.pop();
-            // rebuild flat tree to reflect search removal
-            app.toggle_media_filter(); // toggle twice to force rebuild
+            app.toggle_media_filter();
             app.toggle_media_filter();
         }
         KeyCode::Char(c) => {
             app.search_query.push(c);
-            // force rebuild
             app.toggle_media_filter();
             app.toggle_media_filter();
         }
@@ -147,16 +143,8 @@ fn handle_browser_search_input(app: &mut App, key: KeyCode) {
 
 fn handle_destination_browser_input(app: &mut App, key: KeyCode) {
     match key {
-        KeyCode::Esc | KeyCode::Char('q') => app.current_view = AppView::FileBrowser,
-        KeyCode::Up | KeyCode::Char('k') => app.local_browser_prev(),
-        KeyCode::Down | KeyCode::Char('j') => app.local_browser_next(),
-        KeyCode::Enter => app.local_browser_enter(),
-        KeyCode::Backspace | KeyCode::Char('h') => {
-            if let Some(parent) = app.local_browser_path.parent() {
-                app.local_browser_path = parent.to_path_buf();
-                app.load_local_browser();
-            }
-        }
+        KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Backspace => app.browser_go_back(),
         _ => {}
     }
 }

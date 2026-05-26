@@ -110,7 +110,7 @@ pub fn fetch_thumbnail_bytes(client: &AdbClient, remote_path: &str) -> Option<Ve
 
 /// Decode image bytes into a pixel grid scaled to fit terminal dimensions.
 pub fn decode_to_grid(image_bytes: &[u8], max_width: u16, max_height: u16) -> Option<ThumbnailGrid> {
-    use image::io::Reader as ImageReader;
+    use image::ImageReader;
     use std::io::Cursor;
 
     let reader = ImageReader::new(Cursor::new(image_bytes))

@@ -161,6 +161,43 @@ impl AdbClient {
         Ok(())
     }
 
+    /// Push a single file from local path to device using adb push.
+    pub fn push_file(&self, local_path: &str, remote_path: &str) -> AppResult<()> {
+        let serial = self.device_serial()?;
+        let output = Command::new("adb")
+            .args(["-s", serial, "push", local_path, remote_path])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .map_err(|e| AppError::Transfer {
+                path: local_path.to_string(),
+                reason: format!("Push command failed: {}", e),
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.contains("Permission denied") {
+                return Err(AppError::Permission {
+                    path: remote_path.to_string(),
+                });
+            }
+            return Err(AppError::Transfer {
+                path: local_path.to_string(),
+                reason: stderr.to_string(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Delete a file or directory on the selected device.
+    pub fn rm_remote(&self, remote_path: &str) -> AppResult<()> {
+        // Use rm -rf for robust deletion
+        let cmd = format!("rm -rf '{}'", remote_path);
+        let _ = self.shell_command(&cmd)?;
+        Ok(())
+    }
+
     /// Pull a directory using tar streaming (much faster for bulk).
     /// Returns a child process whose stdout streams the tar data.
     pub fn pull_dir_tar_stream(&self, remote_dir: &str) -> AppResult<std::process::Child> {
