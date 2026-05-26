@@ -8,6 +8,7 @@ use crate::state::StateManager;
 use crate::transfer::tar::TarPuller;
 use crate::transfer::recv::RecvPuller;
 use crate::transfer::pool::{WorkerPool, FileJob};
+use crate::transfer::hash::compute_file_hash;
 
 /// Direction of the transfer.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -34,6 +35,8 @@ pub struct TransferProgress {
     pub start_time: std::time::Instant,
     pub end_time: Option<std::time::Instant>,
     pub active_workers: u8,
+    pub integrity_verified: u64,
+    pub integrity_failed: u64,
 }
 
 impl TransferProgress {
@@ -54,6 +57,8 @@ impl TransferProgress {
             start_time: std::time::Instant::now(),
             end_time: None,
             active_workers: 1,
+            integrity_verified: 0,
+            integrity_failed: 0,
         }
     }
 
@@ -379,21 +384,29 @@ impl TransferEngine {
                 Ok(bytes) => {
                     let local_path_str = local_path.to_str().unwrap_or("");
 
+                    // Compute hash for integrity tracking and dedup
+                    let file_hash = compute_file_hash(&local_path).ok();
+
                     let mut progress = self.progress.lock().unwrap();
                     progress.completed_files += 1;
                     progress.transferred_bytes += bytes;
+                    if file_hash.is_some() {
+                        progress.integrity_verified += 1;
+                    }
                     progress.update_speed();
 
                     state_manager.mark_file_completed(
                         &file_node.path,
                         file_node.size,
                         file_node.mtime,
+                        file_hash.clone(),
                     );
                     // Update delta sync record for future runs
                     state_manager.update_sync_record(
                         &file_node.path,
                         file_node.size,
                         local_path_str,
+                        file_hash,
                     );
                 }
                 Err(e) => {

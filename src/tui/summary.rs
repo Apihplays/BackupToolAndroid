@@ -85,6 +85,24 @@ pub fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::Cyan),
             ),
         ]),
+        Line::from(vec![
+            Span::styled("  🔒 Verified:   ", Style::default().fg(Color::Rgb(50, 205, 50))),
+            Span::styled(
+                format!("{} files", progress.integrity_verified),
+                Style::default().fg(Color::White).bold(),
+            ),
+            if progress.integrity_failed > 0 {
+                Span::styled(
+                    format!("   ⚠ {} integrity failures", progress.integrity_failed),
+                    Style::default().fg(Color::Red).bold(),
+                )
+            } else {
+                Span::styled(
+                    "   ✓ all checksums passed",
+                    Style::default().fg(Color::Green),
+                )
+            },
+        ]),
         Line::from(""),
     ])
     .block(

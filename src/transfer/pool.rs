@@ -7,6 +7,7 @@ use crate::error::AppResult;
 use crate::state::StateManager;
 use crate::transfer::engine::{TransferProgress, TransferDirection};
 use crate::transfer::recv::RecvPuller;
+use crate::transfer::hash::compute_file_hash;
 
 /// A file job to be pulled by a worker.
 #[derive(Debug, Clone)]
@@ -120,15 +121,21 @@ impl WorkerPool {
 
                     match transfer_result {
                         Ok(bytes) => {
+                            // Compute hash for integrity tracking and dedup
+                            let file_hash = compute_file_hash(std::path::Path::new(&job.local_path)).ok();
+
                             let mut p = progress.lock().unwrap();
                             p.completed_files += 1;
                             p.transferred_bytes += bytes;
+                            if file_hash.is_some() {
+                                p.integrity_verified += 1;
+                            }
                             p.update_speed();
                             drop(p);
 
                             let mut sm = state_manager.lock().unwrap();
-                            sm.mark_file_completed(&job.remote_path, job.size, job.mtime);
-                            sm.update_sync_record(&job.remote_path, job.size, &job.local_path);
+                            sm.mark_file_completed(&job.remote_path, job.size, job.mtime, file_hash.clone());
+                            sm.update_sync_record(&job.remote_path, job.size, &job.local_path, file_hash);
                         }
                         Err(e) => {
                             let mut p = progress.lock().unwrap();

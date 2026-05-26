@@ -59,6 +59,11 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
                 format!("{}", progress.delta_skipped),
                 Style::default().fg(Color::Rgb(100, 149, 237)).bold(), // cornflower blue
             ),
+            Span::styled("  Verified: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                format!("{}", progress.integrity_verified),
+                Style::default().fg(Color::Rgb(50, 205, 50)).bold(), // lime green
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Size:   ", Style::default().fg(Color::DarkGray)),

@@ -32,6 +32,13 @@ pub enum AppError {
     #[error("State file corrupted: {0}")]
     StateCorrupted(String),
 
+    #[error("Checksum mismatch: {path} — expected {expected}, got {actual}")]
+    ChecksumMismatch {
+        path: String,
+        expected: String,
+        actual: String,
+    },
+
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
 

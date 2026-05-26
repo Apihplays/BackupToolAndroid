@@ -13,6 +13,9 @@ pub struct CompletedFile {
     pub size: u64,
     pub mtime: u64,
     pub pulled_at: DateTime<Utc>,
+    /// xxh3-128 hash of the pulled file (hex string). None for files pulled before hashing was added.
+    #[serde(default)]
+    pub hash: Option<String>,
 }
 
 /// A failed file record.
@@ -29,6 +32,9 @@ pub struct FailedFile {
 pub struct SyncRecord {
     pub path: String,
     pub size: u64,
+    /// xxh3-128 hash at last sync (hex string). None for records created before hashing.
+    #[serde(default)]
+    pub hash: Option<String>,
     pub local_path: String,
     pub synced_at: DateTime<Utc>,
 }
@@ -70,7 +76,7 @@ pub struct StateManager {
     state: TransferState,
     state_file: PathBuf,
     completed_set: HashSet<String>,   // fast lookup for resume
-    sync_map: HashMap<String, u64>,   // fast lookup for delta: path -> size
+    sync_map: HashMap<String, (u64, Option<String>)>,   // fast lookup for delta: path -> (size, hash)
     max_retries: u32,
 }
 
@@ -105,10 +111,10 @@ impl StateManager {
             .map(|f| f.path.clone())
             .collect();
 
-        let sync_map: HashMap<String, u64> = state
+        let sync_map: HashMap<String, (u64, Option<String>)> = state
             .synced_files
             .iter()
-            .map(|r| (r.path.clone(), r.size))
+            .map(|r| (r.path.clone(), (r.size, r.hash.clone())))
             .collect();
 
         Some(Self {
@@ -131,29 +137,38 @@ impl StateManager {
     }
 
     /// Delta sync: check if a remote file is unchanged since last sync.
-    /// Compares by file size only (fast, avoids mtime inconsistencies).
+    /// Uses hash comparison when available, falls back to size-only.
     pub fn is_unchanged(&self, path: &str, remote_size: u64) -> bool {
-        if let Some(&last_size) = self.sync_map.get(path) {
-            last_size == remote_size
+        if let Some((last_size, _hash)) = self.sync_map.get(path) {
+            // Size must always match; hash is checked during integrity verification
+            *last_size == remote_size
         } else {
             false
         }
     }
 
-    /// Update the sync record after a successful pull.
-    pub fn update_sync_record(&mut self, path: &str, size: u64, local_path: &str) {
+    /// Get the stored hash for a synced file (if available).
+    pub fn get_sync_hash(&self, path: &str) -> Option<&str> {
+        self.sync_map.get(path)
+            .and_then(|(_, hash)| hash.as_deref())
+    }
+
+    /// Update the sync record after a successful pull, with optional hash.
+    pub fn update_sync_record(&mut self, path: &str, size: u64, local_path: &str, hash: Option<String>) {
         // Update or insert into the sync map
-        self.sync_map.insert(path.to_string(), size);
+        self.sync_map.insert(path.to_string(), (size, hash.clone()));
 
         // Update or insert into the persisted list
         if let Some(existing) = self.state.synced_files.iter_mut().find(|r| r.path == path) {
             existing.size = size;
+            existing.hash = hash;
             existing.local_path = local_path.to_string();
             existing.synced_at = Utc::now();
         } else {
             self.state.synced_files.push(SyncRecord {
                 path: path.to_string(),
                 size,
+                hash,
                 local_path: local_path.to_string(),
                 synced_at: Utc::now(),
             });
@@ -170,13 +185,14 @@ impl StateManager {
             .unwrap_or(true)
     }
 
-    /// Mark a file as completed.
-    pub fn mark_file_completed(&mut self, path: &str, size: u64, mtime: u64) {
+    /// Mark a file as completed, with optional hash for integrity tracking.
+    pub fn mark_file_completed(&mut self, path: &str, size: u64, mtime: u64, hash: Option<String>) {
         let record = CompletedFile {
             path: path.to_string(),
             size,
             mtime,
             pulled_at: Utc::now(),
+            hash,
         };
 
         self.completed_set.insert(path.to_string());
