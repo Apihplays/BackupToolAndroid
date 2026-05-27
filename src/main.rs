@@ -16,6 +16,11 @@ fn main() {
     } else {
         "andpull_output".to_string()
     };
+    // Ensure the destination directory exists
+    if let Err(e) = std::fs::create_dir_all(&destination) {
+        eprintln!("Failed to create destination directory: {}", e);
+        std::process::exit(1);
+    }
 
     // Initialize TUI
     let mut terminal = match tui::init_terminal() {

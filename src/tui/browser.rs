@@ -239,8 +239,8 @@ fn render_local_tree(frame: &mut Frame, area: Rect, app: &App) {
         let msg = Paragraph::new(vec![
             Line::from(""),
             Line::from(Span::styled(
-                "  Loading local tree...",
-                Style::default().fg(Color::Yellow),
+                "  Folder is empty",
+                Style::default().fg(Color::DarkGray),
             )),
         ])
         .block(block);

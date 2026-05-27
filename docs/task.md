@@ -22,16 +22,21 @@
   - [x] Write 5 unit tests for hash module (all passing)
   - [x] Git commit the feature
 
-## In Progress 🔧
-
-- [/] **Remove Image Preview Feature**
+- [x] **Remove Image Preview Feature**
   - [x] `Cargo.toml`: Remove `image` dependency
   - [x] `src/tui/thumbnail.rs`: Delete file
   - [x] `src/tui/mod.rs`: Remove `thumbnail` module declaration
   - [x] `src/app.rs`: Remove `ThumbnailCache`, `current_preview`, and fetching logic
   - [x] `src/tui/browser.rs`: Remove split layout and thumbnail rendering, expand list to 100% width
   - [x] Run `cargo clippy` and `cargo test` to verify clean removal
-  - [/] Git commit the removal
+  - [x] Git commit the removal
+
+## In Progress 🔧
+
+- [/] **Fix Local Tree "Loading" Bug**
+  - [x] `src/main.rs`: Auto-create destination directory
+  - [x] `src/tui/browser.rs`: Fix misleading "Loading..." text for empty folders
+  - [/] Commit fix
 
 ## Backlog 📋
 
