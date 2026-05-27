@@ -133,13 +133,11 @@ fn handle_browser_search_input(app: &mut App, key: KeyCode) {
         KeyCode::Esc | KeyCode::Enter => app.current_view = AppView::FileBrowser,
         KeyCode::Backspace => {
             app.search_query.pop();
-            app.toggle_media_filter();
-            app.toggle_media_filter();
+            app.apply_search_filter();
         }
         KeyCode::Char(c) => {
             app.search_query.push(c);
-            app.toggle_media_filter();
-            app.toggle_media_filter();
+            app.apply_search_filter();
         }
         _ => {}
     }

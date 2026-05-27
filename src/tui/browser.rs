@@ -173,12 +173,16 @@ fn render_file_tree(frame: &mut Frame, area: Rect, app: &App) {
         .style(Style::default().bg(Color::Rgb(15, 15, 25)));
 
     if app.flat_tree.is_empty() {
+        let (msg_text, msg_color) = if !app.search_query.is_empty() {
+            (format!("  No results for '{}'", app.search_query), Color::DarkGray)
+        } else if app.file_tree.is_none() {
+            ("  Loading file tree...".to_string(), Color::Yellow)
+        } else {
+            ("  Folder is empty".to_string(), Color::DarkGray)
+        };
         let msg = Paragraph::new(vec![
             Line::from(""),
-            Line::from(Span::styled(
-                "  Loading file tree...",
-                Style::default().fg(Color::Yellow),
-            )),
+            Line::from(Span::styled(msg_text, Style::default().fg(msg_color))),
         ])
         .block(block);
         frame.render_widget(msg, area);

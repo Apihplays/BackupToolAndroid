@@ -36,12 +36,20 @@
   - [x] `src/tui/browser.rs`: Fix misleading "Loading..." text for empty folders
   - [x] Commit fix
 
+- [x] **Fix Search/Filter Bugs**
+  - [x] `src/tui/browser.rs`: Fix Android panel empty-state ("No results" vs "Loading" vs "Empty")
+  - [x] `src/app.rs`: Add `apply_search_filter()` method (replace double-toggle hack)
+  - [x] `src/tui/mod.rs`: Replace double `toggle_media_filter()` with `apply_search_filter()`
+  - [x] Run `cargo clippy` + `cargo test`
+  - [x] Git commit
+
 ## In Progress 🔧
+
 *(None)*
 
 ## Backlog 📋
 
-- [ ] Feature #1: Fuzzy Search & Advanced Filtering
+- [ ] Feature #1: Fuzzy Search & Advanced Filtering (includes Phase 2: Deep recursive search in collapsed directories)
 - [ ] Feature #2: "Headless" Auto-Backup Mode (CLI)
 - [ ] Feature #3: Bidirectional Sync (Push Capabilities) — partially exists
 - [ ] Feature #5: Configurable Pull Profiles

@@ -441,6 +441,12 @@ impl App {
         self.rebuild_local_flat_tree();
     }
 
+    /// Re-filter the flat trees based on the current search query.
+    pub fn apply_search_filter(&mut self) {
+        self.rebuild_flat_tree();
+        self.rebuild_local_flat_tree();
+    }
+
     // === Transfer & File Operations ===
 
     pub fn start_transfer(&mut self) {
