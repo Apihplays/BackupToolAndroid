@@ -43,12 +43,14 @@
   - [x] Run `cargo clippy` + `cargo test`
   - [x] Git commit
 
-## In Progress 🔧
-
-- [/] **Fix Critical Select-All Data Loss Bug**
+- [x] **Fix Critical Select-All Data Loss Bug** (2026-05-27)
   - [x] `src/app.rs`: Refactor `browser_select_all()` to select only visible filtered files
   - [x] Run `cargo clippy` + `cargo test`
-  - [/] Commit critical fix
+  - [x] Commit critical fix
+
+## In Progress 🔧
+
+*(None)*
 
 ## Backlog 📋
 
