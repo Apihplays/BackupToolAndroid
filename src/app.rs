@@ -8,8 +8,6 @@ use crate::adb::client::{AdbClient, DeviceInfo};
 use crate::scanner::{FileNode, Scanner, LocalScanner};
 use crate::state::StateManager;
 use crate::transfer::engine::{TransferEngine, TransferProgress, TransferDirection};
-use crate::tui::thumbnail::{ThumbnailCache, ThumbnailGrid};
-use std::time::Instant;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pane {
@@ -83,11 +81,6 @@ pub struct App {
     // Status
     pub status_message: String,
     pub is_loading: bool,
-
-    // Preview
-    pub thumbnail_cache: ThumbnailCache,
-    pub preview_debounce: Option<Instant>,
-    pub current_preview: Option<(String, ThumbnailGrid)>,
 }
 
 impl App {
@@ -114,9 +107,6 @@ impl App {
             summary_scroll: 0,
             status_message: String::new(),
             is_loading: false,
-            thumbnail_cache: ThumbnailCache::new(),
-            preview_debounce: None,
-            current_preview: None,
         }
     }
 
@@ -296,13 +286,11 @@ impl App {
             Pane::Left => {
                 if !self.flat_tree.is_empty() {
                     self.browser_index = (self.browser_index + 1).min(self.flat_tree.len() - 1);
-                    self.preview_debounce = Some(Instant::now());
                 }
             }
             Pane::Right => {
                 if !self.local_flat_tree.is_empty() {
                     self.local_browser_index = (self.local_browser_index + 1).min(self.local_flat_tree.len() - 1);
-                    self.preview_debounce = Some(Instant::now());
                 }
             }
         }
@@ -312,11 +300,9 @@ impl App {
         match self.active_pane {
             Pane::Left => {
                 self.browser_index = self.browser_index.saturating_sub(1);
-                self.preview_debounce = Some(Instant::now());
             }
             Pane::Right => {
                 self.local_browser_index = self.local_browser_index.saturating_sub(1);
-                self.preview_debounce = Some(Instant::now());
             }
         }
     }
@@ -433,7 +419,6 @@ impl App {
             Pane::Left => Pane::Right,
             Pane::Right => Pane::Left,
         };
-        self.preview_debounce = Some(Instant::now());
     }
 
     pub fn browser_go_back(&mut self) {
@@ -609,65 +594,7 @@ impl App {
         self.summary_scroll += 1;
     }
 
-    // === Preview ===
-
-    pub fn update_preview(&mut self) {
-        if self.current_view != AppView::FileBrowser {
-            return;
-        }
-
-        let flat_node = match self.active_pane {
-            Pane::Left => self.flat_tree.get(self.browser_index),
-            Pane::Right => self.local_flat_tree.get(self.local_browser_index),
-        };
-
-        if let Some(flat_node) = flat_node {
-            if flat_node.is_dir || !crate::tui::thumbnail::is_thumbnail_supported(&flat_node.name) {
-                self.current_preview = None;
-                return;
-            }
-
-            let path = flat_node.path.clone();
-
-            if let Some((ref current_path, _)) = self.current_preview {
-                if current_path == &path {
-                    return;
-                }
-            }
-
-            if let Some(debounce) = self.preview_debounce {
-                if debounce.elapsed() < std::time::Duration::from_millis(300) {
-                    return;
-                }
-            } else {
-                self.preview_debounce = Some(Instant::now());
-                return;
-            }
-
-            self.preview_debounce = None;
-
-            if let Some(cached) = self.thumbnail_cache.get(&path) {
-                self.current_preview = cached.clone().map(|g| (path.clone(), g));
-                return;
-            }
-
-            let raw_bytes = match self.active_pane {
-                Pane::Left => crate::tui::thumbnail::fetch_thumbnail_bytes(&self.adb_client, &path),
-                Pane::Right => std::fs::read(&path).ok(),
-            };
-
-            let grid = if let Some(bytes) = raw_bytes {
-                crate::tui::thumbnail::decode_to_grid(&bytes, 60, 30)
-            } else {
-                None
-            };
-
-            self.thumbnail_cache.insert(path.clone(), grid.clone());
-            self.current_preview = grid.map(|g| (path, g));
-        } else {
-            self.current_preview = None;
-        }
-    }
+    // Preview functionality removed
 }
 
 /// Find a node in the tree by path (mutable).

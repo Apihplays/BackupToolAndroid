@@ -1,7 +1,6 @@
 pub mod browser;
 pub mod progress;
 pub mod summary;
-pub mod thumbnail;
 pub mod widgets;
 
 use crossterm::{
@@ -80,11 +79,9 @@ pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut 
             }
         }
 
-        // Check if we should update transfer progress or thumbnails
+        // Check if we should update transfer progress
         if app.current_view == AppView::Transferring {
             app.update_transfer_progress();
-        } else if app.current_view == AppView::FileBrowser {
-            app.update_preview();
         }
 
         if app.should_quit {

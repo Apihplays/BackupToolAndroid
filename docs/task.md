@@ -9,20 +9,29 @@
 - [x] Implement Delta Sync, Concurrent Transfer, and Thumbnail Previews (2026-04-26)
 - [x] Fix: Stop transfer timer when completed or cancelled (2026-04-26)
 - [x] Refactor: Clean up all 19 clippy warnings, unused imports, deprecated APIs (2026-05-27)
+- [x] **Feature #4: Smart Deduplication & Integrity Checks** (2026-05-27)
+  - [x] Add `xxhash-rust` crate dependency (xxh3-128, ~30 GB/s)
+  - [x] Create `src/transfer/hash.rs` — streaming file hash computation
+  - [x] Extend `SyncRecord` and `CompletedFile` with optional hash field
+  - [x] Extend `StateManager` sync_map to store (size, hash) tuples
+  - [x] Add `get_sync_hash()` method for hash-based dedup lookups
+  - [x] Add `ChecksumMismatch` error variant to `AppError`
+  - [x] Compute xxh3 hash after every successful file pull (single + concurrent paths)
+  - [x] Track `integrity_verified` / `integrity_failed` in `TransferProgress`
+  - [x] Display verified count in progress TUI and integrity stats in summary TUI
+  - [x] Write 5 unit tests for hash module (all passing)
+  - [x] Git commit the feature
 
 ## In Progress 🔧
 
-- [/] **Feature #4: Smart Deduplication & Integrity Checks**
-  - [ ] Add `xxhash` crate dependency for fast hashing
-  - [ ] Extend `SyncRecord` to store file hash alongside size
-  - [ ] Extend `StateManager` with hash-based `is_unchanged()` comparison
-  - [ ] Add post-transfer integrity verification (hash local file vs device file)
-  - [ ] Add `ChecksumMismatch` error variant to `AppError`
-  - [ ] Update `TransferProgress` to track integrity-verified count
-  - [ ] Update TUI progress/summary views to show verification stats
-  - [ ] Add `--verify` CLI flag for optional post-pull verification
-  - [ ] Write unit tests for hash computation and comparison logic
-  - [ ] Git commit the feature
+- [/] **Remove Image Preview Feature**
+  - [x] `Cargo.toml`: Remove `image` dependency
+  - [x] `src/tui/thumbnail.rs`: Delete file
+  - [x] `src/tui/mod.rs`: Remove `thumbnail` module declaration
+  - [x] `src/app.rs`: Remove `ThumbnailCache`, `current_preview`, and fetching logic
+  - [x] `src/tui/browser.rs`: Remove split layout and thumbnail rendering, expand list to 100% width
+  - [x] Run `cargo clippy` and `cargo test` to verify clean removal
+  - [/] Git commit the removal
 
 ## Backlog 📋
 

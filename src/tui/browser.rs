@@ -330,14 +330,6 @@ fn render_info_panel(frame: &mut Frame, area: Rect, app: &App) {
         Line::from("  [/]      Search / Filter"),
     ];
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Min(15),       // Stats panel
-            Constraint::Percentage(45), // Thumbnail preview
-        ])
-        .split(area);
-
     let info = Paragraph::new(text)
         .block(
             Block::default()
@@ -348,14 +340,7 @@ fn render_info_panel(frame: &mut Frame, area: Rect, app: &App) {
                 .style(Style::default().bg(Color::Rgb(15, 15, 25))),
         );
 
-    frame.render_widget(info, chunks[0]);
-
-    // Render thumbnail preview
-    if let Some((_, ref grid)) = app.current_preview {
-        crate::tui::thumbnail::render_thumbnail(frame, chunks[1], grid);
-    } else {
-        crate::tui::thumbnail::render_no_preview(frame, chunks[1]);
-    }
+    frame.render_widget(info, area);
 }
 
 /// Get a file icon based on extension.
