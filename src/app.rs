@@ -394,13 +394,27 @@ impl App {
         match self.active_pane {
             Pane::Left => {
                 if let Some(ref mut tree) = self.file_tree {
-                    tree.set_selected_recursive(true);
+                    // Deselect everything first to ensure clean state
+                    tree.set_selected_recursive(false);
+                    // Select only nodes that are visible in the currently filtered flat_tree
+                    for flat_node in &self.flat_tree {
+                        if let Some(node) = find_node_mut(tree, &flat_node.path) {
+                            node.selected = true;
+                        }
+                    }
                 }
                 self.rebuild_flat_tree();
             }
             Pane::Right => {
                 if let Some(ref mut tree) = self.local_tree {
-                    tree.set_selected_recursive(true);
+                    // Deselect everything first to ensure clean state
+                    tree.set_selected_recursive(false);
+                    // Select only nodes that are visible in the currently filtered local_flat_tree
+                    for flat_node in &self.local_flat_tree {
+                        if let Some(node) = find_node_mut(tree, &flat_node.path) {
+                            node.selected = true;
+                        }
+                    }
                 }
                 self.rebuild_local_flat_tree();
             }

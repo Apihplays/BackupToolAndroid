@@ -45,7 +45,10 @@
 
 ## In Progress 🔧
 
-*(None)*
+- [/] **Fix Critical Select-All Data Loss Bug**
+  - [x] `src/app.rs`: Refactor `browser_select_all()` to select only visible filtered files
+  - [x] Run `cargo clippy` + `cargo test`
+  - [/] Commit critical fix
 
 ## Backlog 📋
 
