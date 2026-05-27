@@ -75,8 +75,8 @@ impl TransferState {
 pub struct StateManager {
     state: TransferState,
     state_file: PathBuf,
-    completed_set: HashSet<String>,   // fast lookup for resume
-    sync_map: HashMap<String, (u64, Option<String>)>,   // fast lookup for delta: path -> (size, hash)
+    completed_set: HashSet<String>, // fast lookup for resume
+    sync_map: HashMap<String, (u64, Option<String>)>, // fast lookup for delta: path -> (size, hash)
     max_retries: u32,
 }
 
@@ -149,12 +149,19 @@ impl StateManager {
 
     /// Get the stored hash for a synced file (if available).
     pub fn get_sync_hash(&self, path: &str) -> Option<&str> {
-        self.sync_map.get(path)
+        self.sync_map
+            .get(path)
             .and_then(|(_, hash)| hash.as_deref())
     }
 
     /// Update the sync record after a successful pull, with optional hash.
-    pub fn update_sync_record(&mut self, path: &str, size: u64, local_path: &str, hash: Option<String>) {
+    pub fn update_sync_record(
+        &mut self,
+        path: &str,
+        size: u64,
+        local_path: &str,
+        hash: Option<String>,
+    ) {
         // Update or insert into the sync map
         self.sync_map.insert(path.to_string(), (size, hash.clone()));
 

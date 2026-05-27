@@ -31,12 +31,13 @@
   - [x] Run `cargo clippy` and `cargo test` to verify clean removal
   - [x] Git commit the removal
 
-## In Progress 🔧
-
-- [/] **Fix Local Tree "Loading" Bug**
+- [x] **Fix Local Tree "Loading" Bug**
   - [x] `src/main.rs`: Auto-create destination directory
   - [x] `src/tui/browser.rs`: Fix misleading "Loading..." text for empty folders
-  - [/] Commit fix
+  - [x] Commit fix
+
+## In Progress 🔧
+*(None)*
 
 ## Backlog 📋
 

@@ -1,13 +1,13 @@
 #![allow(dead_code)]
 
+use glob::Pattern;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use glob::Pattern;
 
 use crate::adb::client::{AdbClient, DeviceInfo};
-use crate::scanner::{FileNode, Scanner, LocalScanner};
+use crate::scanner::{FileNode, LocalScanner, Scanner};
 use crate::state::StateManager;
-use crate::transfer::engine::{TransferEngine, TransferProgress, TransferDirection};
+use crate::transfer::engine::{TransferDirection, TransferEngine, TransferProgress};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pane {
@@ -59,7 +59,7 @@ pub struct App {
     pub file_tree: Option<FileNode>,
     pub flat_tree: Vec<FlatNode>,
     pub browser_index: usize,
-    
+
     // File browser (Local PC)
     pub local_tree: Option<FileNode>,
     pub local_flat_tree: Vec<FlatNode>,
@@ -153,7 +153,10 @@ impl App {
     pub fn select_device(&mut self) {
         if let Some(device) = self.devices.get(self.device_list_index).cloned() {
             if device.state != "device" {
-                self.status_message = format!("Cannot connect: device is '{}'. Check authorization on phone.", device.state);
+                self.status_message = format!(
+                    "Cannot connect: device is '{}'. Check authorization on phone.",
+                    device.state
+                );
                 return;
             }
             self.adb_client.select_device(device);
@@ -200,18 +203,21 @@ impl App {
         self.flat_tree.clear();
         if let Some(ref tree) = self.file_tree {
             let visible = tree.flatten_visible(self.media_filter);
-            
+
             let filtered: Vec<_> = if !self.search_query.is_empty() {
                 let pattern = Pattern::new(&self.search_query);
                 let query_lower = self.search_query.to_lowercase();
-                
-                visible.into_iter().filter(|node| {
-                    if let Ok(ref pat) = pattern {
-                        pat.matches(&node.name)
-                    } else {
-                        node.name.to_lowercase().contains(&query_lower)
-                    }
-                }).collect()
+
+                visible
+                    .into_iter()
+                    .filter(|node| {
+                        if let Ok(ref pat) = pattern {
+                            pat.matches(&node.name)
+                        } else {
+                            node.name.to_lowercase().contains(&query_lower)
+                        }
+                    })
+                    .collect()
             } else {
                 visible
             };
@@ -243,18 +249,21 @@ impl App {
         self.local_flat_tree.clear();
         if let Some(ref tree) = self.local_tree {
             let visible = tree.flatten_visible(self.media_filter);
-            
+
             let filtered: Vec<_> = if !self.search_query.is_empty() {
                 let pattern = Pattern::new(&self.search_query);
                 let query_lower = self.search_query.to_lowercase();
-                
-                visible.into_iter().filter(|node| {
-                    if let Ok(ref pat) = pattern {
-                        pat.matches(&node.name)
-                    } else {
-                        node.name.to_lowercase().contains(&query_lower)
-                    }
-                }).collect()
+
+                visible
+                    .into_iter()
+                    .filter(|node| {
+                        if let Ok(ref pat) = pattern {
+                            pat.matches(&node.name)
+                        } else {
+                            node.name.to_lowercase().contains(&query_lower)
+                        }
+                    })
+                    .collect()
             } else {
                 visible
             };
@@ -290,7 +299,8 @@ impl App {
             }
             Pane::Right => {
                 if !self.local_flat_tree.is_empty() {
-                    self.local_browser_index = (self.local_browser_index + 1).min(self.local_flat_tree.len() - 1);
+                    self.local_browser_index =
+                        (self.local_browser_index + 1).min(self.local_flat_tree.len() - 1);
                 }
             }
         }
@@ -436,7 +446,11 @@ impl App {
     pub fn start_transfer(&mut self) {
         let (tree, direction) = match self.active_pane {
             Pane::Left => {
-                let selected_count = self.file_tree.as_ref().map(|t| t.selected_file_count()).unwrap_or(0);
+                let selected_count = self
+                    .file_tree
+                    .as_ref()
+                    .map(|t| t.selected_file_count())
+                    .unwrap_or(0);
                 if selected_count == 0 {
                     self.status_message = "No remote files selected to pull!".into();
                     return;
@@ -444,7 +458,11 @@ impl App {
                 (self.file_tree.clone().unwrap(), TransferDirection::Pull)
             }
             Pane::Right => {
-                let selected_count = self.local_tree.as_ref().map(|t| t.selected_file_count()).unwrap_or(0);
+                let selected_count = self
+                    .local_tree
+                    .as_ref()
+                    .map(|t| t.selected_file_count())
+                    .unwrap_or(0);
                 if selected_count == 0 {
                     self.status_message = "No local files selected to push!".into();
                     return;
@@ -470,7 +488,9 @@ impl App {
                 let mut state_manager = StateManager::new(&tree.path, &destination);
                 let engine = TransferEngine { progress };
 
-                if let Err(e) = engine.execute(&client, &tree, &destination, &mut state_manager, direction) {
+                if let Err(e) =
+                    engine.execute(&client, &tree, &destination, &mut state_manager, direction)
+                {
                     let mut p = engine.progress.lock().unwrap();
                     p.errors.push(("FATAL".into(), e.to_string()));
                     p.is_complete = true;
@@ -494,13 +514,14 @@ impl App {
                         self.status_message = "No remote files selected to delete!".into();
                         return;
                     }
-                    
-                    self.status_message = format!("Deleting {} items from device...", files.len() + dirs.len());
-                    
+
+                    self.status_message =
+                        format!("Deleting {} items from device...", files.len() + dirs.len());
+
                     for f in files.iter().chain(dirs.iter()) {
                         let _ = self.adb_client.rm_remote(&f.path);
                     }
-                    
+
                     self.status_message = "Remote deletion complete.".into();
                 }
                 self.load_file_tree();
@@ -514,7 +535,8 @@ impl App {
                         return;
                     }
 
-                    self.status_message = format!("Deleting {} items locally...", files.len() + dirs.len());
+                    self.status_message =
+                        format!("Deleting {} items locally...", files.len() + dirs.len());
 
                     for f in files {
                         let _ = std::fs::remove_file(&f.path);

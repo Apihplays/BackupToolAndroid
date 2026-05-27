@@ -4,10 +4,9 @@ use crate::error::AppResult;
 /// Media file extensions to filter for.
 pub const MEDIA_EXTENSIONS: &[&str] = &[
     // Images
-    "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "raw", "cr2", "nef", "arw", "dng", "svg", "tiff", "tif",
-    // Video
-    "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ts",
-    // Audio
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "heic", "heif", "raw", "cr2", "nef", "arw", "dng",
+    "svg", "tiff", "tif", // Video
+    "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "m4v", "3gp", "ts", // Audio
     "mp3", "wav", "flac", "aac", "ogg", "wma", "m4a", "opus",
     // Documents (sometimes considered media)
     "pdf",
@@ -24,10 +23,10 @@ pub struct FileNode {
     pub children: Vec<FileNode>,
     pub selected: bool,
     pub expanded: bool,
-    pub loaded: bool,       // whether children have been fetched
+    pub loaded: bool, // whether children have been fetched
     pub depth: usize,
-    pub total_size: u64,    // aggregate size including children
-    pub file_count: u64,    // number of files (recursive)
+    pub total_size: u64, // aggregate size including children
+    pub file_count: u64, // number of files (recursive)
 }
 
 impl FileNode {
@@ -191,7 +190,9 @@ impl Scanner {
 
         // Sort: directories first, then alphabetical
         node.children.sort_by(|a, b| {
-            b.is_dir.cmp(&a.is_dir).then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            b.is_dir
+                .cmp(&a.is_dir)
+                .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
         });
 
         node.loaded = true;
@@ -201,7 +202,11 @@ impl Scanner {
     }
 
     /// Recursively load all children up to a max depth.
-    pub fn load_recursive(client: &AdbClient, node: &mut FileNode, max_depth: usize) -> AppResult<()> {
+    pub fn load_recursive(
+        client: &AdbClient,
+        node: &mut FileNode,
+        max_depth: usize,
+    ) -> AppResult<()> {
         if node.depth >= max_depth {
             return Ok(());
         }
@@ -229,16 +234,16 @@ impl Scanner {
         let mut root = FileNode::root("/");
         root.name = "Device Root".to_string();
         root.depth = 0;
-        
+
         // 1. Internal Storage
         let mut internal = FileNode::root("/sdcard");
         internal.name = "Internal Storage".to_string();
         internal.depth = 1;
         internal.expanded = false;
-        
+
         // Prepare children list
         let mut children = vec![internal];
-        
+
         // 2. Discover physical SD cards in /storage
         let cmd = "ls -1 /storage 2>/dev/null";
         if let Ok(output) = client.shell_command(cmd) {
@@ -254,16 +259,16 @@ impl Scanner {
                 }
             }
         }
-        
+
         // Pre-load the first level for better UX
         for child in &mut children {
             let _ = Self::load_children(client, child);
         }
-        
+
         root.children = children;
         root.loaded = true;
         root.compute_totals();
-        
+
         Ok(root)
     }
 }

@@ -11,8 +11,8 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // overall progress bar
-            Constraint::Length(8),  // stats
+            Constraint::Length(3), // overall progress bar
+            Constraint::Length(8), // stats
             Constraint::Min(5),    // current file + error log
         ])
         .split(area);
@@ -43,11 +43,13 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
             Span::styled("  Failed: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
                 format!("{}", progress.failed_files),
-                Style::default().fg(if progress.failed_files > 0 {
-                    Color::Red
-                } else {
-                    Color::Green
-                }).bold(),
+                Style::default()
+                    .fg(if progress.failed_files > 0 {
+                        Color::Red
+                    } else {
+                        Color::Green
+                    })
+                    .bold(),
             ),
             Span::styled("  Skipped: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
@@ -88,15 +90,9 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
                 Style::default().fg(Color::Cyan).bold(),
             ),
             Span::styled("   Elapsed: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                &elapsed,
-                Style::default().fg(Color::White),
-            ),
+            Span::styled(&elapsed, Style::default().fg(Color::White)),
             Span::styled("   ETA: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                &eta,
-                Style::default().fg(Color::Yellow),
-            ),
+            Span::styled(&eta, Style::default().fg(Color::Yellow)),
         ]),
         Line::from(""),
     ])
@@ -115,7 +111,7 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
     let bottom_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // current file
+            Constraint::Length(3), // current file
             Constraint::Min(2),    // error log
         ])
         .split(chunks[2]);
@@ -165,10 +161,7 @@ pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
                         path.rsplit('/').next().unwrap_or(path),
                         Style::default().fg(Color::Red),
                     ),
-                    Span::styled(
-                        format!(": {}", err),
-                        Style::default().fg(Color::DarkGray),
-                    ),
+                    Span::styled(format!(": {}", err), Style::default().fg(Color::DarkGray)),
                 ])
             })
             .collect()

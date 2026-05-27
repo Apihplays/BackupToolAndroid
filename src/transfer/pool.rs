@@ -5,9 +5,9 @@ use std::thread;
 use crate::adb::client::{AdbClient, DeviceInfo};
 use crate::error::AppResult;
 use crate::state::StateManager;
-use crate::transfer::engine::{TransferProgress, TransferDirection};
-use crate::transfer::recv::RecvPuller;
+use crate::transfer::engine::{TransferDirection, TransferProgress};
 use crate::transfer::hash::compute_file_hash;
+use crate::transfer::recv::RecvPuller;
 
 /// A file job to be pulled by a worker.
 #[derive(Debug, Clone)]
@@ -115,14 +115,17 @@ impl WorkerPool {
                                 let dir = &job.remote_path[..pos];
                                 let _ = client.shell_command(&format!("mkdir -p '{}'", dir));
                             }
-                            client.push_file(&job.local_path, &job.remote_path).map(|_| job.size)
+                            client
+                                .push_file(&job.local_path, &job.remote_path)
+                                .map(|_| job.size)
                         }
                     };
 
                     match transfer_result {
                         Ok(bytes) => {
                             // Compute hash for integrity tracking and dedup
-                            let file_hash = compute_file_hash(std::path::Path::new(&job.local_path)).ok();
+                            let file_hash =
+                                compute_file_hash(std::path::Path::new(&job.local_path)).ok();
 
                             let mut p = progress.lock().unwrap();
                             p.completed_files += 1;
@@ -134,8 +137,18 @@ impl WorkerPool {
                             drop(p);
 
                             let mut sm = state_manager.lock().unwrap();
-                            sm.mark_file_completed(&job.remote_path, job.size, job.mtime, file_hash.clone());
-                            sm.update_sync_record(&job.remote_path, job.size, &job.local_path, file_hash);
+                            sm.mark_file_completed(
+                                &job.remote_path,
+                                job.size,
+                                job.mtime,
+                                file_hash.clone(),
+                            );
+                            sm.update_sync_record(
+                                &job.remote_path,
+                                job.size,
+                                &job.local_path,
+                                file_hash,
+                            );
                         }
                         Err(e) => {
                             let mut p = progress.lock().unwrap();
@@ -150,9 +163,7 @@ impl WorkerPool {
                     }
 
                     // Auto-save state periodically
-                    let completed = {
-                        progress.lock().unwrap().completed_files
-                    };
+                    let completed = { progress.lock().unwrap().completed_files };
                     if completed % 50 == 0 {
                         let sm = state_manager.lock().unwrap();
                         let _ = sm.save();

@@ -1,4 +1,4 @@
-use std::io::{Read, Write, BufWriter};
+use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
@@ -34,11 +34,9 @@ impl TarPuller {
         // Start tar stream from device
         let mut child = client.pull_dir_tar_stream(remote_dir)?;
 
-        let stdout = child.stdout.take().ok_or_else(|| {
-            AppError::Transfer {
-                path: remote_dir.to_string(),
-                reason: "Failed to capture tar output stream".into(),
-            }
+        let stdout = child.stdout.take().ok_or_else(|| AppError::Transfer {
+            path: remote_dir.to_string(),
+            reason: "Failed to capture tar output stream".into(),
         })?;
 
         // We'll read the tar stream and extract manually
@@ -52,9 +50,8 @@ impl TarPuller {
         let tar_temp = Path::new(local_dir).join(".andpull_temp.tar");
 
         {
-            let mut tar_file = BufWriter::new(
-                std::fs::File::create(&tar_temp).map_err(AppError::Io)?
-            );
+            let mut tar_file =
+                BufWriter::new(std::fs::File::create(&tar_temp).map_err(AppError::Io)?);
 
             let mut reader = std::io::BufReader::new(stdout);
 
@@ -168,7 +165,7 @@ mod tar_reader {
             let mut header = [0u8; 512];
 
             match self.reader.read_exact(&mut header) {
-                Ok(()) => {},
+                Ok(()) => {}
                 Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => return Ok(None),
                 Err(e) => return Err(e),
             }

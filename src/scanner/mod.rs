@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
-pub mod tree;
 pub mod local;
+pub mod tree;
 
-pub use tree::{FileNode, Scanner};
 pub use local::LocalScanner;
+pub use tree::{FileNode, Scanner};

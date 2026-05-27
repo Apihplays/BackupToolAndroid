@@ -6,7 +6,10 @@ use crate::app::{App, AppView};
 /// Render the title bar at the top of the screen.
 pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &App) {
     let title = Paragraph::new(Line::from(vec![
-        Span::styled(" ⚡ andpull ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
+        Span::styled(
+            " ⚡ andpull ",
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        ),
         Span::styled(" ", Style::default()),
         Span::styled(
             match app.current_view {

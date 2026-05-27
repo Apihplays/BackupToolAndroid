@@ -30,7 +30,10 @@ pub fn restore_terminal() -> io::Result<()> {
 }
 
 /// Main TUI event loop.
-pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut App) -> io::Result<()> {
+pub fn run_tui(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut App,
+) -> io::Result<()> {
     loop {
         // Draw current view
         terminal.draw(|frame| {
@@ -40,9 +43,9 @@ pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut 
             let chunks = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([
-                    Constraint::Length(3),  // title bar
-                    Constraint::Min(1),     // main content
-                    Constraint::Length(3),  // status bar
+                    Constraint::Length(3), // title bar
+                    Constraint::Min(1),    // main content
+                    Constraint::Length(3), // status bar
                 ])
                 .split(area);
 
@@ -54,7 +57,9 @@ pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut 
                 AppView::DeviceSelect => browser::render_device_select(frame, chunks[1], app),
                 AppView::FileBrowser => browser::render_file_browser(frame, chunks[1], app),
                 AppView::FileBrowserSearch => browser::render_file_browser(frame, chunks[1], app),
-                AppView::DestinationBrowser => browser::render_destination_browser(frame, chunks[1], app),
+                AppView::DestinationBrowser => {
+                    browser::render_destination_browser(frame, chunks[1], app)
+                }
                 AppView::Transferring => progress::render_progress(frame, chunks[1], app),
                 AppView::Summary => summary::render_summary(frame, chunks[1], app),
             }
@@ -71,7 +76,9 @@ pub fn run_tui(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, app: &mut 
                         AppView::DeviceSelect => handle_device_select_input(app, key.code),
                         AppView::FileBrowser => handle_browser_input(app, key.code),
                         AppView::FileBrowserSearch => handle_browser_search_input(app, key.code),
-                        AppView::DestinationBrowser => handle_destination_browser_input(app, key.code),
+                        AppView::DestinationBrowser => {
+                            handle_destination_browser_input(app, key.code)
+                        }
                         AppView::Transferring => handle_transfer_input(app, key.code),
                         AppView::Summary => handle_summary_input(app, key.code),
                     }

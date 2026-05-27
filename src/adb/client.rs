@@ -13,8 +13,16 @@ pub struct DeviceInfo {
 
 impl std::fmt::Display for DeviceInfo {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let icon = if self.transport == "wifi" { "📶" } else { "🔌" };
-        write!(f, "{} {} [{}] ({})", icon, self.model, self.serial, self.transport)
+        let icon = if self.transport == "wifi" {
+            "📶"
+        } else {
+            "🔌"
+        };
+        write!(
+            f,
+            "{} {} [{}] ({})",
+            icon, self.model, self.serial, self.transport
+        )
     }
 }
 
@@ -59,7 +67,8 @@ impl AdbClient {
 
                 // Keep all devices regardless of state so the user is aware they are connected
                 // Extract model from key-value pairs
-                let model = parts.iter()
+                let model = parts
+                    .iter()
                     .find(|p| p.starts_with("model:"))
                     .map(|p| p.trim_start_matches("model:").to_string())
                     .unwrap_or_else(|| "Unknown".into());
@@ -214,10 +223,7 @@ impl AdbClient {
         } else {
             format!("{}/", remote_path)
         };
-        let cmd = format!(
-            "ls -la '{}' 2>/dev/null | tail -n +2",
-            path_with_slash
-        );
+        let cmd = format!("ls -la '{}' 2>/dev/null | tail -n +2", path_with_slash);
         let output = self.shell_command(&cmd)?;
         let mut entries = Vec::new();
 
@@ -302,17 +308,23 @@ fn parse_ls_line(line: &str, parent_path: &str) -> Option<RemoteEntry> {
     let mut name_idx = 0;
 
     for (i, part) in parts.iter().enumerate() {
-        if i < 3 { continue; }
-        
+        if i < 3 {
+            continue;
+        }
+
         // Match YYYY-MM-DD
         if part.len() == 10 && part.chars().filter(|c| *c == '-').count() == 2 {
             date_idx = i;
             name_idx = i + 2;
             break;
         }
-        
+
         // Match Month (Jan, Feb, etc)
-        if ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"].contains(part) {
+        if [
+            "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+        ]
+        .contains(part)
+        {
             date_idx = i;
             name_idx = i + 3;
             break;
@@ -343,7 +355,7 @@ fn parse_ls_line(line: &str, parent_path: &str) -> Option<RemoteEntry> {
             current_pos += pos + part.len();
         }
     }
-    
+
     let name = if name_start > 0 {
         line[name_start..].to_string()
     } else {

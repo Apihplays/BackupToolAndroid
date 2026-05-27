@@ -12,7 +12,7 @@ pub fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(12), // summary stats
-            Constraint::Min(5),    // error details
+            Constraint::Min(5),     // error details
         ])
         .split(area);
 
@@ -86,7 +86,10 @@ pub fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
             ),
         ]),
         Line::from(vec![
-            Span::styled("  🔒 Verified:   ", Style::default().fg(Color::Rgb(50, 205, 50))),
+            Span::styled(
+                "  🔒 Verified:   ",
+                Style::default().fg(Color::Rgb(50, 205, 50)),
+            ),
             Span::styled(
                 format!("{} files", progress.integrity_verified),
                 Style::default().fg(Color::White).bold(),
@@ -150,7 +153,11 @@ pub fn render_summary(frame: &mut Frame, area: Rect, app: &App) {
                 .border_style(Style::default().fg(Color::DarkGray))
                 .title(format!(
                     " {} Failed Files ({}) ",
-                    if progress.errors.is_empty() { "✓" } else { "✗" },
+                    if progress.errors.is_empty() {
+                        "✓"
+                    } else {
+                        "✗"
+                    },
                     progress.errors.len()
                 ))
                 .title_style(Style::default().fg(if progress.errors.is_empty() {
