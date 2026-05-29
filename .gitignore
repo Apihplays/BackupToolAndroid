@@ -3,3 +3,5 @@
 /andpull_output/
 *.env
 *.ab
+/.agent/
+/docs/
