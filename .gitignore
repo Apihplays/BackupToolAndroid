@@ -1,1 +1,5 @@
 /target
+/.deep-copilot/
+/andpull_output/
+*.env
+*.ab
