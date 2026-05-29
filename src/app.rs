@@ -492,6 +492,53 @@ impl App {
     // === Transfer & File Operations ===
 
     pub fn start_transfer(&mut self) {
+        // Safety net: ensure any selected but unloaded directories are fully loaded before transfer
+        match self.active_pane {
+            Pane::Left => {
+                let mut paths_to_load = Vec::new();
+                if let Some(ref tree) = self.file_tree {
+                    for dir in tree.selected_dirs() {
+                        if !dir.loaded {
+                            paths_to_load.push(dir.path.clone());
+                        }
+                    }
+                }
+                if let Some(ref mut tree) = self.file_tree {
+                    for path in paths_to_load {
+                        if let Some(node) = find_node_mut(tree, &path) {
+                            let _ = crate::scanner::tree::Scanner::load_recursive(
+                                &self.adb_client,
+                                node,
+                                usize::MAX,
+                            );
+                            node.set_selected_recursive(true);
+                        }
+                    }
+                }
+            }
+            Pane::Right => {
+                let mut paths_to_load = Vec::new();
+                if let Some(ref tree) = self.local_tree {
+                    for dir in tree.selected_dirs() {
+                        if !dir.loaded {
+                            paths_to_load.push(dir.path.clone());
+                        }
+                    }
+                }
+                if let Some(ref mut tree) = self.local_tree {
+                    for path in paths_to_load {
+                        if let Some(node) = find_node_mut(tree, &path) {
+                            let _ = crate::scanner::local::LocalScanner::load_recursive(
+                                node,
+                                usize::MAX,
+                            );
+                            node.set_selected_recursive(true);
+                        }
+                    }
+                }
+            }
+        }
+
         let (tree, direction) = match self.active_pane {
             Pane::Left => {
                 let selected_count = self
