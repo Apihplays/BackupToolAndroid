@@ -502,7 +502,7 @@ impl App {
         let destination = match direction {
             TransferDirection::Pull => self.destination.clone(),
             TransferDirection::Push => {
-                if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
+                let path = if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
                     if flat_node.is_dir {
                         flat_node.path.clone()
                     } else {
@@ -518,6 +518,12 @@ impl App {
                     }
                 } else {
                     "/sdcard".to_string()
+                };
+
+                if path == "/" {
+                    "/sdcard".to_string()
+                } else {
+                    path
                 }
             }
         };
