@@ -64,16 +64,16 @@
 
 ## In Progress 🔧
 
-- [/] **Fix Push Folder Selection Bug — Children Not Loaded on Select**
+- [x] **Fix Push Folder Selection Bug — Children Not Loaded on Select**
   - [x] **Bug 1 — `browser_toggle_select` doesn't load children before selecting**
     - [x] `src/app.rs`: In `browser_toggle_select()` Right pane, when the node `is_dir && !node.loaded`, call `LocalScanner::load_recursive(node, max_depth)` before `set_selected_recursive()`
     - [x] `src/app.rs`: In `browser_toggle_select()` Left pane (Android), when the node `is_dir && !node.loaded`, call `Scanner::load_recursive(client, node, max_depth)` before `set_selected_recursive()`
     - [x] `src/app.rs`: Also fix `browser_select_all()` for both panes — ensure unloaded dirs get their children loaded before mass-select
-  - [ ] **Bug 2 — `selected_file_count` / `selected_total_size` return 0 for unloaded dirs**
-    - [ ] `src/scanner/tree.rs`: Verify that after the Bug 1 fix, counts are correct (children are now loaded so the existing recursive logic should work)
-    - [ ] If any edge case remains (e.g. deeply nested unloaded subdirs), add a safety `load_recursive` call in `start_transfer()` before passing the tree to the engine
-  - [ ] Run `cargo clippy` and `cargo test`
-  - [ ] Git commit the fix
+  - [x] **Bug 2 — `selected_file_count` / `selected_total_size` return 0 for unloaded dirs**
+    - [x] `src/scanner/tree.rs`: Verify that after the Bug 1 fix, counts are correct (children are now loaded so the existing recursive logic should work)
+    - [x] If any edge case remains (e.g. deeply nested unloaded subdirs), add a safety `load_recursive` call in `start_transfer()` before passing the tree to the engine
+  - [x] Run `cargo clippy` and `cargo test`
+  - [x] Git commit the fix
 
 ## Backlog 📋
 
