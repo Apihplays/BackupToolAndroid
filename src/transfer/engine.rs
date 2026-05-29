@@ -117,6 +117,7 @@ impl TransferEngine {
         client: &AdbClient,
         root: &FileNode,
         destination: &str,
+        base_path: &str,
         state_manager: &mut StateManager,
         direction: TransferDirection,
     ) -> AppResult<()> {
@@ -195,6 +196,7 @@ impl TransferEngine {
                             &pool,
                             &files,
                             destination,
+                            base_path,
                             state_manager,
                             direction,
                         )?;
@@ -208,6 +210,7 @@ impl TransferEngine {
                     &pool,
                     &files,
                     destination,
+                    base_path,
                     state_manager,
                     direction,
                 )?;
@@ -227,6 +230,7 @@ impl TransferEngine {
                 &pool,
                 &standalone_files,
                 destination,
+                base_path,
                 state_manager,
                 direction,
             )?;
@@ -248,12 +252,14 @@ impl TransferEngine {
 
     /// Pull files using the concurrent worker pool.
     /// Pre-filters resume/delta skips before dispatching to workers.
+    #[allow(clippy::too_many_arguments)]
     fn pull_files_concurrent(
         &self,
         client: &AdbClient,
         _pool: &WorkerPool,
         files: &[&FileNode],
         destination: &str,
+        base_path: &str,
         state_manager: &mut StateManager,
         direction: TransferDirection,
     ) -> AppResult<()> {
@@ -264,6 +270,7 @@ impl TransferEngine {
                     client,
                     files,
                     destination,
+                    base_path,
                     state_manager,
                     direction,
                 )
@@ -274,22 +281,18 @@ impl TransferEngine {
         let mut jobs = Vec::with_capacity(files.len());
 
         for file in files {
-            // Check if already completed (resume)
-            if state_manager.is_completed(&file.path) {
-                let mut progress = self.progress.lock().unwrap();
-                progress.skipped_files += 1;
-                progress.completed_files += 1;
-                progress.transferred_bytes += file.size;
-                progress.update_speed();
-                continue;
-            }
-
-            let rel_path = file.path.trim_start_matches('/');
-            let rel_path = rel_path.trim_start_matches('\\');
+            let rel_path = if file.path.starts_with(base_path) {
+                let mut p = &file.path[base_path.len()..];
+                p = p.trim_start_matches('/');
+                p = p.trim_start_matches('\\');
+                p.to_string()
+            } else {
+                file.name.clone()
+            };
 
             let (local_path, remote_path) = match direction {
                 TransferDirection::Pull => {
-                    let local_p = std::path::Path::new(destination).join(rel_path);
+                    let local_p = std::path::Path::new(destination).join(&rel_path);
                     (local_p.to_string_lossy().into_owned(), file.path.clone())
                 }
                 TransferDirection::Push => {
@@ -303,12 +306,23 @@ impl TransferEngine {
                 }
             };
 
-            // Delta sync: check if file is unchanged since last sync
+            // Check if already completed (resume)
             let state_key = if direction == TransferDirection::Pull {
                 &remote_path
             } else {
                 &local_path
             };
+
+            if state_manager.is_completed(state_key) {
+                let mut progress = self.progress.lock().unwrap();
+                progress.skipped_files += 1;
+                progress.completed_files += 1;
+                progress.transferred_bytes += file.size;
+                progress.update_speed();
+                continue;
+            }
+
+            // Delta sync: check if file is unchanged since last sync
             if state_manager.is_unchanged(state_key, file.size) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.delta_skipped += 1;
@@ -371,8 +385,9 @@ impl TransferEngine {
         client: &AdbClient,
         files: &[&FileNode],
         destination: &str,
+        base_path: &str,
         state_manager: &mut StateManager,
-        _direction: TransferDirection,
+        direction: TransferDirection,
     ) -> AppResult<()> {
         for file_node in files {
             let is_cancelled = { self.progress.lock().unwrap().is_cancelled };
@@ -380,8 +395,39 @@ impl TransferEngine {
                 break;
             }
 
+            let rel_path = if file_node.path.starts_with(base_path) {
+                let mut p = &file_node.path[base_path.len()..];
+                p = p.trim_start_matches('/');
+                p = p.trim_start_matches('\\');
+                p.to_string()
+            } else {
+                file_node.name.clone()
+            };
+
+            let (local_path, remote_path) = match direction {
+                TransferDirection::Pull => {
+                    let local_p = Path::new(destination).join(&rel_path);
+                    (local_p.to_string_lossy().into_owned(), file_node.path.clone())
+                }
+                TransferDirection::Push => {
+                    let mut remote_p = destination.to_string();
+                    if !remote_p.ends_with('/') {
+                        remote_p.push('/');
+                    }
+                    let remote_rel = rel_path.replace("\\", "/");
+                    remote_p.push_str(&remote_rel);
+                    (file_node.path.clone(), remote_p)
+                }
+            };
+
             // Check if already completed (for resume)
-            if state_manager.is_completed(&file_node.path) {
+            let state_key = if direction == TransferDirection::Pull {
+                &remote_path
+            } else {
+                &local_path
+            };
+
+            if state_manager.is_completed(state_key) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.skipped_files += 1;
                 progress.completed_files += 1;
@@ -391,7 +437,7 @@ impl TransferEngine {
             }
 
             // Delta sync: check if file is unchanged since last sync (size comparison)
-            if state_manager.is_unchanged(&file_node.path, file_node.size) {
+            if state_manager.is_unchanged(state_key, file_node.size) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.delta_skipped += 1;
                 progress.completed_files += 1;
@@ -406,23 +452,27 @@ impl TransferEngine {
                 progress.current_file = file_node.name.clone();
             }
 
-            // Compute local path
-            let relative = file_node.path.trim_start_matches("/sdcard/");
-            let local_path = Path::new(destination).join(relative);
+            // Transfer the file
+            let transfer_result = match direction {
+                TransferDirection::Pull => {
+                    if let Some(parent) = Path::new(&local_path).parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    RecvPuller::pull_file(client, &remote_path, &local_path)
+                }
+                TransferDirection::Push => {
+                    if let Some(pos) = remote_path.rfind('/') {
+                        let dir = &remote_path[..pos];
+                        let _ = client.shell_command(&format!("mkdir -p '{}'", dir));
+                    }
+                    client.push_file(&local_path, &remote_path).map(|_| file_node.size)
+                }
+            };
 
-            // Ensure parent directory exists
-            if let Some(parent) = local_path.parent() {
-                std::fs::create_dir_all(parent)?;
-            }
-
-            // Pull the file
-            match RecvPuller::pull_file(client, &file_node.path, local_path.to_str().unwrap_or(""))
-            {
+            match transfer_result {
                 Ok(bytes) => {
-                    let local_path_str = local_path.to_str().unwrap_or("");
-
                     // Compute hash for integrity tracking and dedup
-                    let file_hash = compute_file_hash(&local_path).ok();
+                    let file_hash = compute_file_hash(Path::new(&local_path)).ok();
 
                     let mut progress = self.progress.lock().unwrap();
                     progress.completed_files += 1;
@@ -433,16 +483,16 @@ impl TransferEngine {
                     progress.update_speed();
 
                     state_manager.mark_file_completed(
-                        &file_node.path,
+                        state_key,
                         file_node.size,
                         file_node.mtime,
                         file_hash.clone(),
                     );
                     // Update delta sync record for future runs
                     state_manager.update_sync_record(
-                        &file_node.path,
+                        state_key,
                         file_node.size,
-                        local_path_str,
+                        &local_path,
                         file_hash,
                     );
                 }
@@ -451,10 +501,10 @@ impl TransferEngine {
                     progress.failed_files += 1;
                     progress
                         .errors
-                        .push((file_node.path.clone(), e.to_string()));
+                        .push((remote_path.clone(), e.to_string()));
                     progress.update_speed();
 
-                    state_manager.mark_file_failed(&file_node.path, &e.to_string());
+                    state_manager.mark_file_failed(state_key, &e.to_string());
                 }
             }
 

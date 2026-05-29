@@ -74,6 +74,7 @@ pub struct App {
     pub transfer_engine: Option<TransferEngine>,
     pub transfer_progress: Arc<Mutex<TransferProgress>>,
     pub transfer_thread: Option<thread::JoinHandle<()>>,
+    pub last_transfer_direction: Option<TransferDirection>,
 
     // Summary
     pub summary_scroll: u16,
@@ -104,6 +105,7 @@ impl App {
             transfer_engine: None,
             transfer_progress: Arc::new(Mutex::new(TransferProgress::new(0, 0))),
             transfer_thread: None,
+            last_transfer_direction: None,
             summary_scroll: 0,
             status_message: String::new(),
             is_loading: false,
@@ -492,11 +494,34 @@ impl App {
         };
 
         self.current_view = AppView::Transferring;
+        self.last_transfer_direction = Some(direction);
 
         let engine = TransferEngine::new();
         self.transfer_progress = engine.progress.clone();
 
-        let destination = self.destination.clone();
+        let destination = match direction {
+            TransferDirection::Pull => self.destination.clone(),
+            TransferDirection::Push => {
+                if let Some(flat_node) = self.flat_tree.get(self.browser_index) {
+                    if flat_node.is_dir {
+                        flat_node.path.clone()
+                    } else {
+                        if let Some(pos) = flat_node.path.rfind('/') {
+                            if pos == 0 {
+                                "/".to_string()
+                            } else {
+                                flat_node.path[..pos].to_string()
+                            }
+                        } else {
+                            "/sdcard".to_string()
+                        }
+                    }
+                } else {
+                    "/sdcard".to_string()
+                }
+            }
+        };
+        let base_path = tree.path.clone();
         let progress = engine.progress.clone();
         let adb_client = AdbClient::new();
 
@@ -505,11 +530,11 @@ impl App {
             client.select_device(device.clone());
 
             let handle = thread::spawn(move || {
-                let mut state_manager = StateManager::new(&tree.path, &destination);
+                let mut state_manager = StateManager::new(&base_path, &destination);
                 let engine = TransferEngine { progress };
 
                 if let Err(e) =
-                    engine.execute(&client, &tree, &destination, &mut state_manager, direction)
+                    engine.execute(&client, &tree, &destination, &base_path, &mut state_manager, direction)
                 {
                     let mut p = engine.progress.lock().unwrap();
                     p.errors.push(("FATAL".into(), e.to_string()));
@@ -626,6 +651,17 @@ impl App {
     pub fn go_to_browser(&mut self) {
         self.current_view = AppView::FileBrowser;
         self.summary_scroll = 0;
+        match self.last_transfer_direction {
+            Some(TransferDirection::Pull) => {
+                self.load_local_tree();
+            }
+            Some(TransferDirection::Push) => {
+                self.load_file_tree();
+            }
+            None => {
+                self.load_local_tree();
+            }
+        }
     }
 
     pub fn summary_scroll_up(&mut self) {
