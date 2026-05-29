@@ -370,6 +370,13 @@ impl App {
                     let path = flat_node.path.clone();
                     if let Some(ref mut tree) = self.file_tree {
                         if let Some(node) = find_node_mut(tree, &path) {
+                            if node.is_dir && !node.loaded {
+                                let _ = crate::scanner::tree::Scanner::load_recursive(
+                                    &self.adb_client,
+                                    node,
+                                    node.depth + 10,
+                                );
+                            }
                             let new_selected = !node.selected;
                             node.set_selected_recursive(new_selected);
                         }
@@ -382,6 +389,12 @@ impl App {
                     let path = flat_node.path.clone();
                     if let Some(ref mut tree) = self.local_tree {
                         if let Some(node) = find_node_mut(tree, &path) {
+                            if node.is_dir && !node.loaded {
+                                let _ = crate::scanner::local::LocalScanner::load_recursive(
+                                    node,
+                                    node.depth + 10,
+                                );
+                            }
                             let new_selected = !node.selected;
                             node.set_selected_recursive(new_selected);
                         }
@@ -401,7 +414,14 @@ impl App {
                     // Select only nodes that are visible in the currently filtered flat_tree
                     for flat_node in &self.flat_tree {
                         if let Some(node) = find_node_mut(tree, &flat_node.path) {
-                            node.selected = true;
+                            if node.is_dir && !node.loaded {
+                                let _ = crate::scanner::tree::Scanner::load_recursive(
+                                    &self.adb_client,
+                                    node,
+                                    node.depth + 10,
+                                );
+                            }
+                            node.set_selected_recursive(true);
                         }
                     }
                 }
@@ -414,7 +434,13 @@ impl App {
                     // Select only nodes that are visible in the currently filtered local_flat_tree
                     for flat_node in &self.local_flat_tree {
                         if let Some(node) = find_node_mut(tree, &flat_node.path) {
-                            node.selected = true;
+                            if node.is_dir && !node.loaded {
+                                let _ = crate::scanner::local::LocalScanner::load_recursive(
+                                    node,
+                                    node.depth + 10,
+                                );
+                            }
+                            node.set_selected_recursive(true);
                         }
                     }
                 }
