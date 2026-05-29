@@ -48,9 +48,21 @@
   - [x] Run `cargo clippy` + `cargo test`
   - [x] Commit critical fix
 
-## In Progress 🔧
+- [x] **Fix Context-Aware Tree Reloading (Push/Pull)** (2026-05-29)
+  - [x] `src/app.rs`: Add `self.load_local_tree()` to `go_to_browser()` (Initial step)
+  - [x] `src/app.rs`: Add `last_transfer_direction` field to `App` struct
+  - [x] `src/app.rs`: Save transfer direction in `start_transfer()`
+  - [x] `src/app.rs`: Refactor `go_to_browser()` to conditionally load remote or local tree based on direction
+  - [x] Run `cargo clippy` and `cargo test`
 
-*(None)*
+- [x] **Fix Push Path Preservation Bug** (2026-05-29)
+  - [x] `src/transfer/engine.rs`: Update worker signatures to accept `base_path`
+  - [x] `src/app.rs`: Pass `tree.path` as `base_path` in `start_transfer()`
+  - [x] `src/transfer/engine.rs`: Fix `TransferDirection::Push` logic to strip `base_path` to preserve original Android path
+  - [x] Run `cargo clippy` and `cargo test`
+  - [x] Git commit all sync-related fixes
+
+## In Progress 🔧
 
 ## Backlog 📋
 
