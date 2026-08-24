@@ -273,6 +273,141 @@ impl AdbClient {
             mtime,
         })
     }
+    /// Check whether root (su) is available on the device.
+    pub fn su_available(&self) -> bool {
+        matches!(self.shell_command("su -c id"), Ok(output) if output.contains("uid=0"))
+    }
+
+    /// List a directory, falling back to a rooted `ls -1ap` via su when the
+    /// normal listing fails or comes back empty and root is available.
+    pub fn list_dir_rooted(&self, remote_path: &str) -> AppResult<Vec<RemoteEntry>> {
+        match self.list_dir(remote_path) {
+            Ok(entries) if !entries.is_empty() => Ok(entries),
+            other => {
+                if self.su_available() {
+                    let quoted = quote_shell(remote_path);
+                    let cmd = format!("su -c 'ls -1ap {}'", quoted);
+                    let output = self.shell_command(&cmd)?;
+                    Ok(parse_ls_simple(&output, remote_path))
+                } else {
+                    other.map(|_| Vec::new())
+                }
+            }
+        }
+    }
+
+    /// Get the size of a remote file via rooted `wc -c`.
+    pub fn remote_file_size_rooted(&self, path: &str) -> AppResult<u64> {
+        let cmd = format!("su -c 'wc -c < {}'", quote_shell(path));
+        let output = self.shell_command(&cmd)?;
+        output
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .trim_end_matches(|c: char| !c.is_ascii_digit())
+            .parse::<u64>()
+            .map_err(|_| AppError::Protocol(format!("Unexpected wc -c output: {:?}", output)))
+    }
+}
+
+/// Quote a path for safe use inside a single-quoted shell string:
+/// wraps in single quotes and doubles internal single quotes.
+pub fn quote_shell(path: &str) -> String {
+    format!("'{}'", path.replace('\'', r"'\''"))
+}
+
+#[cfg(test)]
+mod ls_simple_tests {
+    use super::*;
+
+    #[test]
+    fn parses_dirs_and_files() {
+        let out = "com.whatsapp/\nMedia/\n.DS_Store\nfile with spaces.txt\n";
+        let entries = parse_ls_simple(out, "/data/data");
+        assert_eq!(entries.len(), 4);
+        assert!(entries[0].is_dir);
+        assert_eq!(entries[0].name, "com.whatsapp");
+        assert_eq!(entries[0].path, "/data/data/com.whatsapp");
+        assert!(!entries[2].is_dir);
+        assert_eq!(entries[3].name, "file with spaces.txt");
+    }
+
+    #[test]
+    fn skips_dot_entries_and_empty_lines() {
+        let out = "./\n../\n\ndir/\n";
+        let entries = parse_ls_simple(out, "/x");
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "dir");
+    }
+
+    #[test]
+    fn dirs_get_zero_size_and_mtime() {
+        let out = "d/\nf.txt\n";
+        let entries = parse_ls_simple(out, "/");
+        assert_eq!(entries[0].size, 0);
+        assert_eq!(entries[0].mtime, 0);
+        assert_eq!(entries[1].name, "f.txt");
+    }
+
+    #[test]
+    fn apostrophes_in_names() {
+        let out = "it's here\n";
+        let entries = parse_ls_simple(out, "/sd");
+        assert_eq!(entries[0].name, "it's here");
+    }
+}
+
+#[cfg(test)]
+mod quote_shell_tests {
+    use super::quote_shell;
+
+    #[test]
+    fn quotes_plain_path() {
+        assert_eq!(
+            quote_shell("/sdcard/WhatsApp/Media"),
+            "'/sdcard/WhatsApp/Media'"
+        );
+    }
+
+    #[test]
+    fn doubles_internal_quotes() {
+        assert_eq!(quote_shell("it's here"), r"'it'\''s here'");
+    }
+
+    #[test]
+    fn preserves_spaces() {
+        assert_eq!(quote_shell("my file name"), "'my file name'");
+    }
+}
+
+/// Parse `ls -1ap` style output: lines ending in '/' are directories,
+/// everything else is a file. The whole line is treated as the entry name.
+fn parse_ls_simple(output: &str, parent_path: &str) -> Vec<RemoteEntry> {
+    let mut entries = Vec::new();
+    for line in output.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() || line == "./" || line == "../" || line == "." || line == ".." {
+            continue;
+        }
+        let is_dir = line.ends_with('/');
+        let name = line.trim_end_matches('/').to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let path = if parent_path.ends_with('/') {
+            format!("{}{}", parent_path, name)
+        } else {
+            format!("{}/{}", parent_path, name)
+        };
+        entries.push(RemoteEntry {
+            name,
+            path,
+            is_dir,
+            size: 0,
+            mtime: 0,
+        });
+    }
+    entries
 }
 
 /// A file or directory entry on the remote device.
