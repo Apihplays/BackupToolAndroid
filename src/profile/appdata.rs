@@ -4,7 +4,6 @@
 // /data/data '<pkg>'`. Because the stream is a raw pipe, a nonzero adb exit
 // after partial output is indistinguishable from a short/corrupt archive, so
 // this module treats size==0 as "skip" and everything else as best-effort.
-#![allow(dead_code)]
 
 use std::io::Read;
 use std::path::Path;

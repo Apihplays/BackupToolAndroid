@@ -2,7 +2,6 @@
 //
 // Pure argument parsing lives here (with unit tests); execution wiring stays
 // in `main.rs`. No external arg-parsing crates — std::env only.
-#![allow(dead_code)]
 
 /// Parsed command-line invocation.
 #[derive(Debug, Clone, PartialEq)]

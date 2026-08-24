@@ -3,7 +3,6 @@
 // `plan_execution` computes the start schedule; `ProfileRunner` spawns one
 // thread per profile, each holding a token from a shared `GlobalBudget` so
 // total concurrent workers stay bounded across profiles.
-#![allow(dead_code)]
 
 use std::sync::Arc;
 use std::thread;

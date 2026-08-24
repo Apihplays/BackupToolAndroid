@@ -1,6 +1,5 @@
 // Restore runner: pushes backed-up media back to device paths, then (optionally)
 // restores app-data via a rooted tar untar. Includes preflight validation.
-#![allow(dead_code)]
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -94,7 +93,7 @@ pub fn preflight_restore(client: &AdbClient, pkg: &str) -> PreflightReport {
 /// - Serial push keeps remote mkdir -p + push atomic per file and makes
 ///   per-profile outcomes trivially attributable.
 pub struct RestoreRunner {
-    /// Warn (don't fail) when estimated payload exceeds this fraction of free space.
+    #[allow(dead_code)] // reserved: free-space preflight threshold, not yet enforced
     pub min_free_fraction: f64,
 }
 

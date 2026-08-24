@@ -1,6 +1,5 @@
 // Backup profile specifications.
 // Scaffolding: consumed by upcoming transfer/scanner integration.
-#![allow(dead_code)]
 
 pub mod appdata;
 pub mod restore;
