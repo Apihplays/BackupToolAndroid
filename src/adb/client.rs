@@ -136,6 +136,23 @@ impl AdbClient {
         Ok(child)
     }
 
+    /// Run ADB exec-out and return a streaming child whose **stdin** is also
+    /// piped, so callers can push data INTO the device command (e.g. piping a
+    /// local tar archive into `su -c tar -xf -`). The caller writes to
+    /// `child.stdin` and reads `child.stdout` if the command produces output.
+    pub fn shell_stream_stdin(&self, cmd: &str) -> AppResult<std::process::Child> {
+        let serial = self.device_serial()?;
+        let child = Command::new("adb")
+            .args(["-s", serial, "exec-out", cmd])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| AppError::Connection(format!("Failed to spawn adb: {}", e)))?;
+
+        Ok(child)
+    }
+
     /// Pull a single file from device to local path using adb pull.
     pub fn pull_file(&self, remote_path: &str, local_path: &str) -> AppResult<()> {
         let serial = self.device_serial()?;
