@@ -1,6 +1,7 @@
 mod adb;
 mod app;
 mod error;
+mod profile;
 mod scanner;
 mod state;
 mod transfer;
