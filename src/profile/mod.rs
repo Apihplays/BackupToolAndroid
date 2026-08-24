@@ -2,7 +2,9 @@
 // Scaffolding: consumed by upcoming transfer/scanner integration.
 #![allow(dead_code)]
 
+pub mod appdata;
 pub mod runner;
+pub mod restore;
 
 /// A single source location on the device to back up.
 #[derive(Debug, Clone, PartialEq, Eq)]
