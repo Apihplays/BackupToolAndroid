@@ -272,3 +272,27 @@ impl Scanner {
         Ok(root)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn file_node(name: &str, size: u64) -> FileNode {
+        let mut n = FileNode::root(name);
+        n.is_dir = false;
+        n.size = size;
+        n
+    }
+
+    #[test]
+    fn compute_totals_sums_children() {
+        let mut root = FileNode::root("/sdcard");
+        root.children.push(file_node("a.jpg", 100));
+        root.children.push(file_node("b.mp4", 250));
+
+        root.compute_totals();
+
+        assert_eq!(root.total_size, 350);
+        assert_eq!(root.file_count, 2);
+    }
+}
