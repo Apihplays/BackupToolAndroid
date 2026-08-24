@@ -2,7 +2,7 @@ use std::io::{BufWriter, Read, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
-use crate::adb::client::AdbClient;
+use crate::adb::client::{quote_shell, AdbClient};
 use crate::error::{AppError, AppResult};
 use crate::transfer::engine::TransferProgress;
 
@@ -22,6 +22,8 @@ impl TarPuller {
     ///
     /// The command `adb exec-out "cd /path && tar cf - ."` streams all
     /// files as a single continuous data pipe. We extract locally.
+    /// When the plain command fails and root is available, retries with
+    /// `su -c` so that protected Android 16 paths are still accessible.
     pub fn pull_dir(
         client: &AdbClient,
         remote_dir: &str,
@@ -31,8 +33,19 @@ impl TarPuller {
         // Create local directory
         std::fs::create_dir_all(local_dir)?;
 
-        // Start tar stream from device
-        let mut child = client.pull_dir_tar_stream(remote_dir)?;
+        // Start tar stream from device, falling back to rooted tar on
+        // permission failure (Android 16 scoped-storage paths).
+        let mut child = match client.pull_dir_tar_stream(remote_dir) {
+            Ok(c) => c,
+            Err(_) if client.su_available() => {
+                let cmd = format!(
+                    "su -c 'cd {} && tar cf - . 2>/dev/null'",
+                    quote_shell(remote_dir)
+                );
+                client.shell_stream(&cmd)?
+            }
+            Err(e) => return Err(e),
+        };
 
         let stdout = child.stdout.take().ok_or_else(|| AppError::Transfer {
             path: remote_dir.to_string(),

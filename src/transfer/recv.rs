@@ -4,6 +4,19 @@ use std::path::Path;
 use crate::adb::client::{quote_shell, AdbClient};
 use crate::error::{AppError, AppResult};
 
+/// Returns `true` when the error indicates a permission denial that might
+/// be bypassed with root access on the device.
+fn is_permission_denied(e: &AppError) -> bool {
+    match e {
+        AppError::Permission { .. } => true,
+        AppError::Transfer { reason, .. } => {
+            reason.contains("Permission denied") || reason.contains("Operation not permitted")
+        }
+        AppError::Io(io) => io.kind() == std::io::ErrorKind::PermissionDenied,
+        _ => false,
+    }
+}
+
 /// Pulls individual files using ADB pull command.
 /// This is the fallback when tar streaming isn't available or when
 /// pulling individually selected files.
@@ -12,22 +25,41 @@ pub struct RecvPuller;
 impl RecvPuller {
     /// Pull a single file from device to local path.
     /// Returns the number of bytes transferred.
+    ///
+    /// Tries a normal `adb pull` first; when that fails with a permission
+    /// error and root (su) is available on the device, falls back to a
+    /// rooted `su -c cat` stream so that protected Android 16 paths
+    /// (e.g. `/sdcard/Android/media/com.whatsapp`) are still accessible.
     pub fn pull_file(client: &AdbClient, remote_path: &str, local_path: &str) -> AppResult<u64> {
         // Ensure parent directory exists
         if let Some(parent) = Path::new(local_path).parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        // Use adb pull
-        client.pull_file(remote_path, local_path)?;
-
-        // Get the size of the pulled file
-        let metadata = std::fs::metadata(local_path).map_err(|e| AppError::Transfer {
-            path: remote_path.to_string(),
-            reason: format!("Could not read pulled file metadata: {}", e),
-        })?;
-
-        Ok(metadata.len())
+        // Try normal adb pull first
+        match client.pull_file(remote_path, local_path) {
+            Ok(()) => {
+                let metadata = std::fs::metadata(local_path).map_err(|e| {
+                    AppError::Transfer {
+                        path: remote_path.to_string(),
+                        reason: format!("Could not read pulled file metadata: {}", e),
+                    }
+                })?;
+                Ok(metadata.len())
+            }
+            Err(e) if is_permission_denied(&e) && client.su_available() => {
+                // Fall back to rooted cat streaming on permission failure
+                Self::pull_rooted(client, remote_path, Path::new(local_path))?;
+                let metadata = std::fs::metadata(local_path).map_err(|e| {
+                    AppError::Transfer {
+                        path: remote_path.to_string(),
+                        reason: format!("Could not read pulled file metadata: {}", e),
+                    }
+                })?;
+                Ok(metadata.len())
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Pull a file only if it doesn't already exist locally with matching size.
@@ -57,7 +89,8 @@ impl RecvPuller {
             std::fs::create_dir_all(parent)?;
         }
 
-        let cmd = format!("su -c cat {}", quote_shell(remote_path));
+        // Use su to bypass Android 16 scoped-storage restrictions
+        let cmd = format!("su -c 'cat {}'", quote_shell(remote_path));
         let mut child = client.shell_stream(&cmd)?;
 
         let mut file = std::fs::File::create(local_path)?;

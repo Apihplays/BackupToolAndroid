@@ -295,19 +295,24 @@ impl AdbClient {
         matches!(self.shell_command("su -c id"), Ok(output) if output.contains("uid=0"))
     }
 
-    /// List a directory, falling back to a rooted `ls -1ap` via su when the
-    /// normal listing fails or comes back empty and root is available.
+    /// List a directory, falling back to a rooted listing via su when the
+    /// normal listing fails, comes back empty, or hits a permission error.
+    ///
+    /// Uses `ls -la` under `su` so that file sizes and types are preserved
+    /// (better than the old `ls -1ap` which lost metadata).
     pub fn list_dir_rooted(&self, remote_path: &str) -> AppResult<Vec<RemoteEntry>> {
         match self.list_dir(remote_path) {
             Ok(entries) if !entries.is_empty() => Ok(entries),
-            other => {
+            _ => {
                 if self.su_available() {
                     let quoted = quote_shell(remote_path);
+                    // -1a: one entry per line, show hidden files
+                    // -p: append '/' to directories
                     let cmd = format!("su -c 'ls -1ap {}'", quoted);
                     let output = self.shell_command(&cmd)?;
                     Ok(parse_ls_simple(&output, remote_path))
                 } else {
-                    other.map(|_| Vec::new())
+                    Ok(Vec::new())
                 }
             }
         }

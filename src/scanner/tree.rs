@@ -175,12 +175,20 @@ pub struct Scanner;
 
 impl Scanner {
     /// Load children for a directory node from the device.
+    ///
+    /// Tries a normal `ls -la` first; when that returns no entries (or fails
+    /// with a permission error) and root is available, retries via
+    /// `su -c 'ls -1ap'` so that protected directories (e.g. Android 16
+    /// scoped-storage paths) are still accessible.
     pub fn load_children(client: &AdbClient, node: &mut FileNode) -> AppResult<()> {
         if !node.is_dir || node.loaded {
             return Ok(());
         }
 
-        let entries = client.list_dir(&node.path)?;
+        let entries = match client.list_dir(&node.path) {
+            Ok(e) if !e.is_empty() => e,
+            _ => client.list_dir_rooted(&node.path)?,
+        };
         let depth = node.depth + 1;
 
         node.children = entries
