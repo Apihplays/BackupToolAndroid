@@ -407,7 +407,10 @@ impl TransferEngine {
             let (local_path, remote_path) = match direction {
                 TransferDirection::Pull => {
                     let local_p = Path::new(destination).join(&rel_path);
-                    (local_p.to_string_lossy().into_owned(), file_node.path.clone())
+                    (
+                        local_p.to_string_lossy().into_owned(),
+                        file_node.path.clone(),
+                    )
                 }
                 TransferDirection::Push => {
                     let mut remote_p = destination.to_string();
@@ -465,7 +468,9 @@ impl TransferEngine {
                         let dir = &remote_path[..pos];
                         let _ = client.shell_command(&format!("mkdir -p '{}'", dir));
                     }
-                    client.push_file(&local_path, &remote_path).map(|_| file_node.size)
+                    client
+                        .push_file(&local_path, &remote_path)
+                        .map(|_| file_node.size)
                 }
             };
 
@@ -499,9 +504,7 @@ impl TransferEngine {
                 Err(e) => {
                     let mut progress = self.progress.lock().unwrap();
                     progress.failed_files += 1;
-                    progress
-                        .errors
-                        .push((remote_path.clone(), e.to_string()));
+                    progress.errors.push((remote_path.clone(), e.to_string()));
                     progress.update_speed();
 
                     state_manager.mark_file_failed(state_key, &e.to_string());

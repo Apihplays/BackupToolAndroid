@@ -612,9 +612,14 @@ impl App {
                 let mut state_manager = StateManager::new(&base_path, &destination);
                 let engine = TransferEngine { progress };
 
-                if let Err(e) =
-                    engine.execute(&client, &tree, &destination, &base_path, &mut state_manager, direction)
-                {
+                if let Err(e) = engine.execute(
+                    &client,
+                    &tree,
+                    &destination,
+                    &base_path,
+                    &mut state_manager,
+                    direction,
+                ) {
                     let mut p = engine.progress.lock().unwrap();
                     p.errors.push(("FATAL".into(), e.to_string()));
                     p.is_complete = true;

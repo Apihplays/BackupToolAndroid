@@ -83,7 +83,19 @@ pub struct StateManager {
 impl StateManager {
     /// Create a new state manager for a transfer.
     pub fn new(source: &str, destination: &str) -> Self {
-        let state_file = Path::new(destination).join(".andpull-state.json");
+        Self::new_named(source, destination, "")
+    }
+
+    /// Create a new state manager whose state file is namespaced by
+    /// `state_name`: `.andpull-state.<state_name>.json` inside `destination`.
+    /// An empty `state_name` produces the classic `.andpull-state.json`.
+    pub fn new_named(source: &str, destination: &str, state_name: &str) -> Self {
+        let filename = if state_name.is_empty() {
+            ".andpull-state.json".to_string()
+        } else {
+            format!(".andpull-state.{}.json", state_name)
+        };
+        let state_file = Path::new(destination).join(filename);
 
         Self {
             state: TransferState::new(source, destination),
