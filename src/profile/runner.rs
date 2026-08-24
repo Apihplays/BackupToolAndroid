@@ -100,6 +100,56 @@ pub struct ProfileRunner {
     max_workers: usize,
 }
 
+/// State of a single profile within a running batch (for TUI polling).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProfileRunState {
+    /// Scheduled but not started yet (stagger delay).
+    Pending,
+    /// Currently transferring.
+    Running,
+    /// Finished (see the joined outcomes for success/error details).
+    Done,
+}
+
+/// Live per-profile slot shared between runner threads and the UI.
+#[derive(Debug, Clone)]
+pub struct ProfileSlot {
+    pub name: String,
+    pub state: ProfileRunState,
+    pub files_transferred: u64,
+    pub finished_at: Option<std::time::Instant>,
+}
+
+/// Handle returned by [`ProfileRunner::spawn_all`]: join handle for the final
+/// outcomes plus a shared, pollable per-status board.
+pub struct ProfileBatch {
+    pub outcomes: thread::JoinHandle<Vec<ProfileOutcome>>,
+    pub slots: Arc<std::sync::Mutex<Vec<ProfileSlot>>>,
+    pub started_at: std::time::Instant,
+}
+
+impl ProfileBatch {
+    /// Snapshot of the current per-profile statuses.
+    pub fn snapshot(&self) -> Vec<ProfileSlot> {
+        self.slots
+            .lock()
+            .map(|slots| slots.clone())
+            .unwrap_or_default()
+    }
+
+    /// Overall elapsed time since the batch was spawned.
+    pub fn elapsed(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+
+    /// True once every profile slot reports `Done`.
+    pub fn all_done(&self) -> bool {
+        self.snapshot()
+            .iter()
+            .all(|s| s.state == ProfileRunState::Done)
+    }
+}
+
 impl Default for ProfileRunner {
     fn default() -> Self {
         Self::new(DEFAULT_MAX_WORKERS)
@@ -111,6 +161,77 @@ impl ProfileRunner {
         Self { max_workers }
     }
 
+    /// Spawn all profiles and return immediately with a pollable batch handle.
+    ///
+    /// The returned `ProfileBatch` exposes a shared status board (one slot per
+    /// profile, updated as each thread progresses) plus the join handle that
+    /// yields the final outcomes. This is what TUI-driven callers use so the
+    /// UI can render live state without blocking.
+    pub fn spawn_all(
+        &self,
+        client: Arc<AdbClient>,
+        profiles: Vec<ProfileSpec>,
+        destination: &str,
+    ) -> ProfileBatch {
+        let plan = plan_execution(&profiles);
+        let budget = Arc::new(GlobalBudget::new(self.max_workers));
+
+        let slots: Vec<ProfileSlot> = profiles
+            .iter()
+            .map(|p| ProfileSlot {
+                name: p.name.clone(),
+                state: ProfileRunState::Pending,
+                files_transferred: 0,
+                finished_at: None,
+            })
+            .collect();
+
+        let board = Arc::new(std::sync::Mutex::new(slots));
+
+        let handles: Vec<_> = profiles
+            .into_iter()
+            .enumerate()
+            .map(|(slot_idx, profile)| {
+                let delay = plan
+                    .iter()
+                    .find(|(name, _)| *name == profile.name)
+                    .map(|(_, d)| *d)
+                    .unwrap_or(Duration::ZERO);
+                let client = Arc::clone(&client);
+                let budget = Arc::clone(&budget);
+                let destination = destination.to_string();
+                let board = Arc::clone(&board);
+
+                thread::spawn(move || {
+                    set_slot_state(&board, slot_idx, ProfileRunState::Running);
+                    let outcome = run_single_profile(client, profile, &destination, delay, &budget);
+                    if let Ok(mut slots) = board.lock() {
+                        if let Some(slot) = slots.get_mut(slot_idx) {
+                            slot.files_transferred = outcome.files_transferred;
+                            slot.finished_at = Some(std::time::Instant::now());
+                        }
+                    }
+                    set_slot_state(&board, slot_idx, ProfileRunState::Done);
+                    outcome
+                })
+            })
+            .collect();
+
+        ProfileBatch {
+            outcomes: thread::spawn(move || {
+                let mut collected = Vec::with_capacity(handles.len());
+                for h in handles {
+                    if let Ok(outcome) = h.join() {
+                        collected.push(outcome);
+                    }
+                }
+                collected
+            }),
+            slots: board,
+            started_at: std::time::Instant::now(),
+        }
+    }
+
     /// Run all profiles in parallel, honoring priority-based start order and
     /// sharing a global pool of `max_workers` slots. Blocks until every
     /// profile has finished.
@@ -120,28 +241,19 @@ impl ProfileRunner {
         profiles: Vec<ProfileSpec>,
         destination: &str,
     ) -> Vec<ProfileOutcome> {
-        let plan = plan_execution(&profiles);
-        let budget = Arc::new(GlobalBudget::new(self.max_workers));
+        self.spawn_all(client, profiles, destination)
+            .outcomes
+            .join()
+            .unwrap_or_default()
+    }
+}
 
-        let handles: Vec<_> = profiles
-            .into_iter()
-            .map(|profile| {
-                let delay = plan
-                    .iter()
-                    .find(|(name, _)| *name == profile.name)
-                    .map(|(_, d)| *d)
-                    .unwrap_or(Duration::ZERO);
-                let client = Arc::clone(&client);
-                let budget = Arc::clone(&budget);
-                let destination = destination.to_string();
-
-                thread::spawn(move || {
-                    run_single_profile(client, profile, &destination, delay, &budget)
-                })
-            })
-            .collect();
-
-        handles.into_iter().filter_map(|h| h.join().ok()).collect()
+/// Update one slot's state on the shared board (ignore poisoning).
+fn set_slot_state(board: &std::sync::Mutex<Vec<ProfileSlot>>, idx: usize, state: ProfileRunState) {
+    if let Ok(mut slots) = board.lock() {
+        if let Some(slot) = slots.get_mut(idx) {
+            slot.state = state;
+        }
     }
 }
 

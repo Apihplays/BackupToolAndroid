@@ -14,6 +14,7 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &App) {
         Span::styled(
             match app.current_view {
                 AppView::DeviceSelect => " 📱 Select Device ",
+                AppView::ProfileSelect => " 🧩 Select Profiles ",
                 AppView::FileBrowser => " 📂 Browse Files ",
                 AppView::FileBrowserSearch => " 🔍 Search Files ",
                 AppView::DestinationBrowser => " 📁 Select Destination ",
@@ -36,7 +37,14 @@ pub fn render_title_bar(frame: &mut Frame, area: Rect, app: &App) {
 /// Render the status bar at the bottom of the screen.
 pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
     let help_text = match app.current_view {
-        AppView::DeviceSelect => "↑↓ Navigate │ Enter Select │ r Refresh │ q Quit",
+        AppView::DeviceSelect => "↑↓ Navigate │ Enter Select │ p Profiles │ r Refresh │ q Quit",
+        AppView::ProfileSelect => {
+            if app.restore_input_active {
+                "Type backup dir │ Enter Start Restore │ Esc Cancel"
+            } else {
+                "↑↓ Navigate │ Space Toggle │ a All │ Enter Backup │ r Restore │ Esc Back │ q Quit"
+            }
+        }
         AppView::FileBrowser => "↑↓ Navigate │ Space Select │ Enter Expand │ a All │ n None │ f Filter │ s Start │ r Resume │ q Quit",
         AppView::FileBrowserSearch => "Type to search │ Enter/Esc Cancel",
         AppView::DestinationBrowser => "↑↓ Navigate │ Enter Select │ Backspace Up │ q Quit",

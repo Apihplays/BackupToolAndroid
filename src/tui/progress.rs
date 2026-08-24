@@ -6,6 +6,11 @@ use crate::tui::widgets::{format_bytes, format_duration, format_speed, render_pr
 
 /// Render the transfer progress view.
 pub fn render_progress(frame: &mut Frame, area: Rect, app: &App) {
+    // Profile-mode transfers get their own per-profile board.
+    if crate::tui::profile::render_profile_progress(frame, area, app) {
+        return;
+    }
+
     let progress = app.transfer_progress_snapshot();
 
     let chunks = Layout::default()

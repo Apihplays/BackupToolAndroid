@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 use crate::adb::client::{AdbClient, DeviceInfo};
+use crate::profile::restore::RestoreRunner;
+use crate::profile::runner::{ProfileBatch, ProfileOutcome, ProfileSlot};
+use crate::profile::{builtin_profiles, ProfileSpec};
 use crate::scanner::{FileNode, LocalScanner, Scanner};
 use crate::state::StateManager;
 use crate::transfer::engine::{TransferDirection, TransferEngine, TransferProgress};
@@ -19,11 +22,23 @@ pub enum Pane {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppView {
     DeviceSelect,
+    ProfileSelect,
     FileBrowser,
     FileBrowserSearch,
     DestinationBrowser,
     Transferring,
     Summary,
+}
+
+/// What kind of operation is currently running in the Transferring/Summary views.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TransferMode {
+    /// Manual file browser transfer (legacy flow).
+    Manual,
+    /// Profile-based backup via ProfileRunner.
+    ProfileBackup,
+    /// Profile restore via RestoreRunner.
+    ProfileRestore,
 }
 
 /// Flattened tree node for TUI rendering.
@@ -76,6 +91,17 @@ pub struct App {
     pub transfer_thread: Option<thread::JoinHandle<()>>,
     pub last_transfer_direction: Option<TransferDirection>,
 
+    // Profile flow
+    pub profiles: Vec<ProfileSpec>,
+    pub selected_profiles: Vec<bool>,
+    pub profile_index: usize,
+    pub transfer_mode: TransferMode,
+    /// Pending restore target directory typed in ProfileSelect ('r' mode).
+    pub restore_input_active: bool,
+    pub restore_dir_input: String,
+    pub profile_batch: Option<ProfileBatch>,
+    pub profile_outcomes: Option<Vec<ProfileOutcome>>,
+
     // Summary
     pub summary_scroll: u16,
 
@@ -106,6 +132,14 @@ impl App {
             transfer_progress: Arc::new(Mutex::new(TransferProgress::new(0, 0))),
             transfer_thread: None,
             last_transfer_direction: None,
+            profiles: builtin_profiles(),
+            selected_profiles: vec![false; builtin_profiles().len()],
+            profile_index: 0,
+            transfer_mode: TransferMode::Manual,
+            restore_input_active: false,
+            restore_dir_input: String::new(),
+            profile_batch: None,
+            profile_outcomes: None,
             summary_scroll: 0,
             status_message: String::new(),
             is_loading: false,
@@ -728,6 +762,147 @@ impl App {
             .lock()
             .map(|p| p.clone())
             .unwrap_or_else(|_| TransferProgress::new(0, 0))
+    }
+
+    // === Profile Flow ===
+
+    pub fn open_profile_select(&mut self) {
+        if self.profiles.is_empty() {
+            self.status_message = "No builtin profiles available.".into();
+            return;
+        }
+        self.profile_index = 0;
+        self.restore_input_active = false;
+        self.restore_dir_input.clear();
+        self.current_view = AppView::ProfileSelect;
+    }
+
+    pub fn profile_list_next(&mut self) {
+        if !self.profiles.is_empty() {
+            self.profile_index = (self.profile_index + 1) % self.profiles.len();
+        }
+    }
+
+    pub fn profile_list_prev(&mut self) {
+        if !self.profiles.is_empty() {
+            self.profile_index = if self.profile_index == 0 {
+                self.profiles.len() - 1
+            } else {
+                self.profile_index - 1
+            };
+        }
+    }
+
+    pub fn profile_toggle(&mut self) {
+        if let Some(flag) = self.selected_profiles.get_mut(self.profile_index) {
+            *flag = !*flag;
+        }
+    }
+
+    pub fn profile_toggle_all(&mut self) {
+        let any_unselected = self.selected_profiles.iter().any(|s| !*s);
+        let target = any_unselected; // 'a' selects all when any missing
+        for flag in &mut self.selected_profiles {
+            *flag = target;
+        }
+    }
+
+    fn selected_profile_specs(&self) -> Vec<ProfileSpec> {
+        self.profiles
+            .iter()
+            .zip(self.selected_profiles.iter())
+            .filter(|(_, sel)| **sel)
+            .map(|(p, _)| p.clone())
+            .collect()
+    }
+
+    /// Start a backup of all selected profiles on a background thread.
+    pub fn start_profile_backup(&mut self) {
+        let selected = self.selected_profile_specs();
+        if selected.is_empty() {
+            self.status_message = "Select at least one profile (space to toggle)!".into();
+            return;
+        }
+
+        let client = Arc::new(AdbClient::new());
+        let destination = self.destination.clone();
+
+        self.transfer_mode = TransferMode::ProfileBackup;
+        self.profile_outcomes = None;
+        self.current_view = AppView::Transferring;
+
+        let runner = crate::profile::runner::ProfileRunner::default();
+        self.profile_batch = Some(runner.spawn_all(client, selected, &destination));
+    }
+
+    /// Begin restore-input mode from ProfileSelect.
+    pub fn start_restore_input(&mut self) {
+        self.restore_input_active = true;
+        self.restore_dir_input = self.destination.clone();
+    }
+
+    /// Start a restore of all selected profiles from the typed backup dir.
+    pub fn start_profile_restore(&mut self) {
+        let selected = self.selected_profile_specs();
+        if selected.is_empty() {
+            self.status_message = "Select at least one profile (space to toggle)!".into();
+            return;
+        }
+        let source_dir = self.restore_dir_input.trim().to_string();
+        if source_dir.is_empty() {
+            self.status_message = "Restore directory cannot be empty.".into();
+            return;
+        }
+
+        let client = Arc::new(AdbClient::new());
+
+        self.transfer_mode = TransferMode::ProfileRestore;
+        self.profile_outcomes = None;
+        self.current_view = AppView::Transferring;
+
+        // Restore runs serially inside one background thread; mark all slots
+        // Running up front and let the join handle carry final outcomes.
+        let board = Arc::new(std::sync::Mutex::new(
+            selected
+                .iter()
+                .map(|p| ProfileSlot {
+                    name: format!("{}:restore", p.name),
+                    state: crate::profile::runner::ProfileRunState::Running,
+                    files_transferred: 0,
+                    finished_at: None,
+                })
+                .collect::<Vec<ProfileSlot>>(),
+        ));
+        let handle = thread::spawn(move || {
+            RestoreRunner::new().run_all(client, selected, &source_dir, false, None)
+        });
+
+        self.profile_batch = Some(ProfileBatch {
+            outcomes: handle,
+            slots: board,
+            started_at: std::time::Instant::now(),
+        });
+    }
+
+    /// Snapshot of live per-profile statuses (empty in manual mode).
+    pub fn profile_slots_snapshot(&self) -> Option<Vec<ProfileSlot>> {
+        self.profile_batch.as_ref().map(|b| b.snapshot())
+    }
+
+    /// Poll profile batch completion; transition to Summary when done.
+    pub fn update_profile_batch(&mut self) {
+        let done = self
+            .profile_batch
+            .as_ref()
+            .map(|b| b.all_done())
+            .unwrap_or(false);
+        if done {
+            if let Some(batch) = self.profile_batch.take() {
+                let outcomes = batch.outcomes.join().unwrap_or_default();
+                self.profile_outcomes = Some(outcomes);
+            }
+            self.current_view = AppView::Summary;
+        }
     }
 
     // === Summary ===

@@ -1,4 +1,5 @@
 pub mod browser;
+pub mod profile;
 pub mod progress;
 pub mod summary;
 pub mod widgets;
@@ -55,6 +56,7 @@ pub fn run_tui(
             // Render main content based on current view
             match app.current_view {
                 AppView::DeviceSelect => browser::render_device_select(frame, chunks[1], app),
+                AppView::ProfileSelect => profile::render_profile_select(frame, chunks[1], app),
                 AppView::FileBrowser => browser::render_file_browser(frame, chunks[1], app),
                 AppView::FileBrowserSearch => browser::render_file_browser(frame, chunks[1], app),
                 AppView::DestinationBrowser => {
@@ -74,6 +76,7 @@ pub fn run_tui(
                 if key.kind == KeyEventKind::Press {
                     match app.current_view {
                         AppView::DeviceSelect => handle_device_select_input(app, key.code),
+                        AppView::ProfileSelect => handle_profile_select_input(app, key.code),
                         AppView::FileBrowser => handle_browser_input(app, key.code),
                         AppView::FileBrowserSearch => handle_browser_search_input(app, key.code),
                         AppView::DestinationBrowser => {
@@ -88,7 +91,10 @@ pub fn run_tui(
 
         // Check if we should update transfer progress
         if app.current_view == AppView::Transferring {
-            app.update_transfer_progress();
+            match app.transfer_mode {
+                crate::app::TransferMode::Manual => app.update_transfer_progress(),
+                _ => app.update_profile_batch(),
+            }
         }
 
         if app.should_quit {
@@ -103,6 +109,7 @@ fn handle_device_select_input(app: &mut App, key: KeyCode) {
         KeyCode::Up | KeyCode::Char('k') => app.device_list_prev(),
         KeyCode::Down | KeyCode::Char('j') => app.device_list_next(),
         KeyCode::Enter => app.select_device(),
+        KeyCode::Char('p') => app.open_profile_select(),
         KeyCode::Char('r') => app.refresh_devices(),
         _ => {}
     }
@@ -147,6 +154,37 @@ fn handle_destination_browser_input(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Backspace => app.browser_go_back(),
+        _ => {}
+    }
+}
+
+fn handle_profile_select_input(app: &mut App, key: KeyCode) {
+    // Restore directory text-input mode.
+    if app.restore_input_active {
+        match key {
+            KeyCode::Esc => {
+                app.restore_input_active = false;
+                app.restore_dir_input.clear();
+            }
+            KeyCode::Enter => app.start_profile_restore(),
+            KeyCode::Backspace => {
+                app.restore_dir_input.pop();
+            }
+            KeyCode::Char(c) => app.restore_dir_input.push(c),
+            _ => {}
+        }
+        return;
+    }
+
+    match key {
+        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Esc => app.current_view = AppView::DeviceSelect,
+        KeyCode::Up | KeyCode::Char('k') => app.profile_list_prev(),
+        KeyCode::Down | KeyCode::Char('j') => app.profile_list_next(),
+        KeyCode::Char(' ') => app.profile_toggle(),
+        KeyCode::Char('a') => app.profile_toggle_all(),
+        KeyCode::Enter => app.start_profile_backup(),
+        KeyCode::Char('r') => app.start_restore_input(),
         _ => {}
     }
 }
