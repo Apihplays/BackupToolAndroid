@@ -175,7 +175,23 @@ impl TransferEngine {
             let relative = dir_node.path.trim_start_matches("/sdcard/");
             let local_dir = Path::new(destination).join(relative);
 
-            if has_tar && direction == TransferDirection::Pull {
+            // Phase 0: Delta bypass — skip tar if all files already synced.
+            let all_synced = {
+                let files = dir_node.selected_files();
+                files.iter().all(|f| {
+                    state_manager.is_unchanged_strict(&f.path, f.size, f.mtime)
+                        || state_manager.is_completed(&f.path)
+                })
+            };
+
+            if all_synced {
+                let mut progress = self.progress.lock().unwrap();
+                let count = dir_node.selected_files().len() as u64;
+                progress.delta_skipped += count;
+                progress.skipped_files += count;
+                progress.completed_files += count;
+                progress.transferred_bytes += dir_node.selected_total_size();
+            } else if has_tar && direction == TransferDirection::Pull {
                 // Use tar streaming for entire directory — streaming
                 // extraction records per-file state as it goes.
                 match TarPuller::pull_dir(

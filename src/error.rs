@@ -69,7 +69,6 @@ const DISK_HEADROOM: u64 = 500 * 1024 * 1024;
 /// estimated transfer. Returns `Err(DiskFull)` if available space is
 /// less than `required + DISK_HEADROOM`.
 pub fn check_disk_space(destination: &str, required_bytes: u64) -> AppResult<()> {
-    use fs2::available_space;
     use std::path::Path;
 
     // Walk up until we find an existing directory (the dest may not exist yet).
@@ -84,7 +83,16 @@ pub fn check_disk_space(destination: &str, required_bytes: u64) -> AppResult<()>
         p
     };
 
-    let avail = available_space(dir).map_err(AppError::Io)?;
+    let avail = {
+        let c_path = std::ffi::CString::new(dir.to_str().unwrap_or("/"))
+            .map_err(|e| AppError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, e)))?;
+        let mut stat: libc::statfs = unsafe { std::mem::zeroed() };
+        let ret = unsafe { libc::statfs(c_path.as_ptr(), &mut stat) };
+        if ret != 0 {
+            return Err(AppError::Io(std::io::Error::last_os_error()));
+        }
+        (stat.f_bavail as u64) * (stat.f_frsize as u64)
+    };
     let needed = required_bytes.saturating_add(DISK_HEADROOM);
 
     if avail < needed {

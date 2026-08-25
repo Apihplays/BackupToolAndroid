@@ -9,7 +9,6 @@ description = "Blazingly fast ADB media pull tool with TUI"
 ratatui = "0.29"
 crossterm = "0.28"
 
-
 # Serialization (state/resume)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -31,8 +30,8 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 # File mtime preservation
 filetime = "0.2"
 
-# Host disk space preflight
-fs2 = "0.4"
+# Host disk space preflight (libc::statfs)
+libc = "0.2"
 
 [profile.release]
 opt-level = 3
@@ -42,4 +41,3 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3"
-libc = "0.2"
