@@ -28,6 +28,12 @@ glob = "0.3.3"
 # Fast hashing for deduplication & integrity checks
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
+# File mtime preservation
+filetime = "0.2"
+
+# Host disk space preflight
+fs2 = "0.4"
+
 [profile.release]
 opt-level = 3
 lto = true
@@ -36,3 +42,4 @@ strip = true
 
 [dev-dependencies]
 tempfile = "3"
+libc = "0.2"

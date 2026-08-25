@@ -7,6 +7,17 @@ use crate::error::{AppError, AppResult};
 use crate::state::StateManager;
 use crate::transfer::engine::TransferProgress;
 
+/// Set a file's modification time from a raw epoch-seconds value.
+/// Non-zero values are written via `filetime`; zero values are skipped
+/// (they indicate an unknown timestamp from the tar header).
+fn set_file_mtime_if_nonzero(path: &Path, mtime_secs: u64) {
+    if mtime_secs == 0 {
+        return;
+    }
+    let ft = filetime::FileTime::from_unix_time(mtime_secs as i64, 0);
+    let _ = filetime::set_file_mtime(path, ft); // best-effort
+}
+
 /// Stats from a tar pull operation.
 pub struct TarPullStats {
     pub files_pulled: u64,
@@ -76,14 +87,20 @@ impl TarPuller {
 
             match reader.stream_next_entry(local_dir)? {
                 Some(entry) => {
-                    files_pulled += 1;
-                    bytes_transferred += entry.size;
+                    // Only count regular files, not directories, to avoid
+                    // double-counting (PRD P3).
+                    if !entry.is_dir {
+                        files_pulled += 1;
+                        bytes_transferred += entry.size;
+                    }
 
                     // Update progress with per-file visibility.
                     {
                         let mut p = progress.lock().unwrap();
-                        p.completed_files += 1;
-                        p.transferred_bytes += entry.size;
+                        if !entry.is_dir {
+                            p.completed_files += 1;
+                            p.transferred_bytes += entry.size;
+                        }
                         p.current_file = entry.name.clone();
                         p.update_speed();
                     }
@@ -100,7 +117,7 @@ impl TarPuller {
                     state_manager.mark_file_completed(
                         &remote_path,
                         entry.size,
-                        0, // mtime unknown from tar header parsing
+                        entry.mtime,
                         None,
                     );
                     state_manager.update_sync_record(
@@ -108,7 +125,7 @@ impl TarPuller {
                         entry.size,
                         &local_str,
                         None,
-                        0, // mtime unknown from tar header
+                        entry.mtime,
                     );
                 }
                 None => break, // End of archive.
@@ -173,6 +190,7 @@ impl TarPuller {
 struct TarEntryMeta {
     name: String,
     size: u64,
+    mtime: u64,
     is_dir: bool,
 }
 
@@ -223,6 +241,13 @@ impl<R: Read> StreamingTarReader<R> {
             .to_string();
         let size = u64::from_str_radix(&size_str, 8).unwrap_or(0);
 
+        // Parse mtime (bytes 136–147, octal epoch seconds).
+        let mtime_str = String::from_utf8_lossy(&header[136..148])
+            .trim_end_matches('\0')
+            .trim()
+            .to_string();
+        let mtime = u64::from_str_radix(&mtime_str, 8).unwrap_or(0);
+
         // Parse type flag (byte 156).
         let type_flag = header[156];
         let is_dir = type_flag == b'5' || name.ends_with('/');
@@ -256,6 +281,13 @@ impl<R: Read> StreamingTarReader<R> {
             let real_type = header[156];
             let real_is_dir = real_type == b'5' || real_name.ends_with('/');
 
+            // Parse mtime from the real header.
+            let real_mtime_str = String::from_utf8_lossy(&header[136..148])
+                .trim_end_matches('\0')
+                .trim()
+                .to_string();
+            let real_mtime = u64::from_str_radix(&real_mtime_str, 8).unwrap_or(0);
+
             // Use the long name but with the real header's size/type.
             let name_from_long = String::from_utf8_lossy(&long_name_buf)
                 .trim_end_matches('\0')
@@ -264,11 +296,12 @@ impl<R: Read> StreamingTarReader<R> {
                 .to_string();
 
             // Stream the real entry's data.
-            self.stream_entry_data(dest_dir, &name_from_long, real_size)?;
+            self.stream_entry_data(dest_dir, &name_from_long, real_size, real_mtime)?;
 
             return Ok(Some(TarEntryMeta {
                 name: name_from_long,
                 size: real_size,
+                mtime: real_mtime,
                 is_dir: real_is_dir,
             }));
         }
@@ -288,22 +321,25 @@ impl<R: Read> StreamingTarReader<R> {
             .to_string();
 
         // Stream data directly to disk.
-        self.stream_entry_data(dest_dir, &cleaned, size)?;
+        self.stream_entry_data(dest_dir, &cleaned, size, mtime)?;
 
         Ok(Some(TarEntryMeta {
             name: cleaned,
             size,
+            mtime,
             is_dir,
         }))
     }
 
     /// Stream `size` bytes of entry data to a file under `dest_dir`,
-    /// creating parent directories as needed. Skips padding afterward.
+    /// creating parent directories as needed. Sets the file's mtime if
+    /// non-zero. Skips padding afterward.
     fn stream_entry_data(
         &mut self,
         dest_dir: &str,
         name: &str,
         size: u64,
+        mtime: u64,
     ) -> AppResult<()> {
         if size == 0 || name.ends_with('/') {
             // Directory or empty file — nothing to stream.
@@ -312,6 +348,15 @@ impl<R: Read> StreamingTarReader<R> {
             if padding > 0 {
                 let mut skip = vec![0u8; padding as usize];
                 self.reader.read_exact(&mut skip)?;
+            }
+            // For empty files (size == 0, not a dir), create and set mtime.
+            if size == 0 && !name.ends_with('/') {
+                let full_path = Path::new(dest_dir).join(name);
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::File::create(&full_path)?;
+                set_file_mtime_if_nonzero(&full_path, mtime);
             }
             return Ok(());
         }
@@ -348,6 +393,11 @@ impl<R: Read> StreamingTarReader<R> {
                 Err(e) => return Err(AppError::Io(e)),
             }
         }
+
+        // Flush and set mtime to match the device's original timestamp.
+        out.flush()?;
+        drop(out);
+        set_file_mtime_if_nonzero(&full_path, mtime);
 
         // Skip padding to 512-byte boundary.
         let padding = (512 - (size % 512)) % 512;
@@ -387,7 +437,7 @@ mod tests {
             // Size (bytes 124–135, octal)
             let size_oct = format!("{:011o}\0", data.len());
             header[124..136].copy_from_slice(size_oct.as_bytes());
-            // Mtime (bytes 136–147)
+            // Mtime (bytes 136–147) — default to 0 (unknown)
             header[136..148].copy_from_slice(b"00000000000\0");
             // Type flag (byte 156) — '0' = regular file
             header[156] = b'0';
@@ -434,6 +484,143 @@ mod tests {
         assert_eq!(files[0].size, 11);
         assert!(!files[0].is_dir);
         assert_eq!(std::fs::read(tmp.path().join("hello.txt")).unwrap(), b"hello world");
+    }
+
+    /// Build a tar with a specific mtime (epoch seconds) for mtime parsing tests.
+    fn build_tar_with_mtime(entries: &[(&str, &[u8], u64)]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        for (name, data, mtime) in entries {
+            let mut header = [0u8; 512];
+            let name_bytes = name.as_bytes();
+            let name_len = name_bytes.len().min(100);
+            header[..name_len].copy_from_slice(&name_bytes[..name_len]);
+            header[100..108].copy_from_slice(b"0000644\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            let size_oct = format!("{:011o}\0", data.len());
+            header[124..136].copy_from_slice(size_oct.as_bytes());
+            let mtime_oct = format!("{:011o}\0", mtime);
+            header[136..148].copy_from_slice(mtime_oct.as_bytes());
+            header[156] = b'0';
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            for b in &mut header[148..156] {
+                *b = b' ';
+            }
+            let chk: u32 = header.iter().map(|&b| b as u32).sum();
+            let chk_oct = format!("{:06o}\0 ", chk);
+            header[148..156].copy_from_slice(&chk_oct.as_bytes()[..8]);
+            buf.extend_from_slice(&header);
+            buf.extend_from_slice(data);
+            let padding = (512 - (data.len() % 512)) % 512;
+            buf.extend(std::iter::repeat_n(0u8, padding));
+        }
+        buf.extend(std::iter::repeat_n(0u8, 1024));
+        buf
+    }
+
+    #[test]
+    fn tar_mtime_parsing_roundtrip() {
+        // 2026-08-25T12:00:00Z = 1787668800
+        let mtime = 1787668800u64;
+        let tar_data = build_tar_with_mtime(&[("photo.jpg", b"jpeg-data", mtime)]);
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().to_str().unwrap();
+
+        let mut reader = StreamingTarReader::new(Cursor::new(&tar_data));
+        let meta = reader.stream_next_entry(dest).unwrap().unwrap();
+
+        assert_eq!(meta.mtime, mtime);
+        assert_eq!(meta.name, "photo.jpg");
+
+        // Verify the local file mtime was set.
+        let local = tmp.path().join("photo.jpg");
+        let meta = std::fs::metadata(&local).unwrap();
+        let ft = filetime::FileTime::from_last_modification_time(&meta);
+        assert_eq!(ft.unix_seconds(), mtime as i64);
+    }
+
+    #[test]
+    fn tar_mtime_zero_not_set() {
+        let tar_data = build_tar_with_mtime(&[("file.txt", b"data", 0)]);
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().to_str().unwrap();
+
+        let mut reader = StreamingTarReader::new(Cursor::new(&tar_data));
+        let meta = reader.stream_next_entry(dest).unwrap().unwrap();
+
+        assert_eq!(meta.mtime, 0);
+        // File should exist but mtime should NOT be set to 0 (left as now()).
+        let local = tmp.path().join("file.txt");
+        assert!(local.exists());
+    }
+
+    #[test]
+    fn dir_entry_not_counted_as_file() {
+        // A directory entry should be extracted but not counted.
+        let mut tar_data = Vec::new();
+        // Directory entry
+        {
+            let mut header = [0u8; 512];
+            header[..4].copy_from_slice(b"sub/");
+            header[100..108].copy_from_slice(b"0000755\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            header[124..136].copy_from_slice(b"00000000000\0");
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[156] = b'5'; // directory
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            for b in &mut header[148..156] {
+                *b = b' ';
+            }
+            let chk: u32 = header.iter().map(|&b| b as u32).sum();
+            let chk_oct = format!("{:06o}\0 ", chk);
+            header[148..156].copy_from_slice(&chk_oct.as_bytes()[..8]);
+            tar_data.extend_from_slice(&header);
+        }
+        // File entry
+        {
+            let data = b"hello";
+            let mut header = [0u8; 512];
+            header[..9].copy_from_slice(b"sub/hello");
+            header[100..108].copy_from_slice(b"0000644\0");
+            header[108..116].copy_from_slice(b"0000000\0");
+            header[116..124].copy_from_slice(b"0000000\0");
+            let size_oct = format!("{:011o}\0", data.len());
+            header[124..136].copy_from_slice(size_oct.as_bytes());
+            header[136..148].copy_from_slice(b"00000000000\0");
+            header[156] = b'0';
+            header[257..263].copy_from_slice(b"ustar\0");
+            header[263..265].copy_from_slice(b"00");
+            for b in &mut header[148..156] {
+                *b = b' ';
+            }
+            let chk: u32 = header.iter().map(|&b| b as u32).sum();
+            let chk_oct = format!("{:06o}\0 ", chk);
+            header[148..156].copy_from_slice(&chk_oct.as_bytes()[..8]);
+            tar_data.extend_from_slice(&header);
+            tar_data.extend_from_slice(data);
+            let padding = (512 - (data.len() % 512)) % 512;
+            tar_data.extend(std::iter::repeat_n(0u8, padding));
+        }
+        tar_data.extend(std::iter::repeat_n(0u8, 1024));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let dest = tmp.path().to_str().unwrap();
+
+        let mut reader = StreamingTarReader::new(Cursor::new(&tar_data));
+        let mut file_count = 0u64;
+        let mut dir_count = 0u64;
+        while let Some(meta) = reader.stream_next_entry(dest).unwrap() {
+            if meta.is_dir {
+                dir_count += 1;
+            } else {
+                file_count += 1;
+            }
+        }
+        assert_eq!(file_count, 1, "only the file entry should count");
+        assert_eq!(dir_count, 1, "the directory entry should be detected");
     }
 
     #[test]

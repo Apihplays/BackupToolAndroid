@@ -9,7 +9,7 @@ use std::thread;
 use std::time::Duration;
 
 use crate::adb::client::AdbClient;
-use crate::error::AppResult;
+use crate::error::{check_disk_space, AppResult};
 use crate::profile::{is_build_artifact, ProfileSpec};
 use crate::scanner::tree::{FileNode, Scanner};
 use crate::state::StateManager;
@@ -346,6 +346,10 @@ fn transfer_profile(
     if tree.selected_file_count() == 0 {
         return Ok((0, 0, 0, 0, 0));
     }
+
+    // Preflight: verify destination filesystem has enough free space.
+    let estimated_bytes = tree.selected_total_size();
+    check_disk_space(destination, estimated_bytes)?;
 
     let engine = TransferEngine::new();
     let mut state_manager = StateManager::new_named(&base_path, destination, &profile.name);

@@ -61,3 +61,66 @@ pub fn is_permission_denied(e: &AppError) -> bool {
         _ => false,
     }
 }
+
+/// Minimum headroom to reserve on the destination filesystem (500 MiB).
+const DISK_HEADROOM: u64 = 500 * 1024 * 1024;
+
+/// Check that the destination filesystem has enough free space for the
+/// estimated transfer. Returns `Err(DiskFull)` if available space is
+/// less than `required + DISK_HEADROOM`.
+pub fn check_disk_space(destination: &str, required_bytes: u64) -> AppResult<()> {
+    use fs2::available_space;
+    use std::path::Path;
+
+    // Walk up until we find an existing directory (the dest may not exist yet).
+    let dir = {
+        let mut p = Path::new(destination);
+        while !p.is_dir() {
+            match p.parent() {
+                Some(parent) => p = parent,
+                None => p = Path::new("/"),
+            }
+        }
+        p
+    };
+
+    let avail = available_space(dir).map_err(AppError::Io)?;
+    let needed = required_bytes.saturating_add(DISK_HEADROOM);
+
+    if avail < needed {
+        return Err(AppError::DiskFull {
+            needed,
+            available: avail,
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn disk_space_check_passes_for_small_transfer() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().to_str().unwrap();
+        // Asking for 1 byte — any real filesystem has more than 500MiB + 1B free.
+        assert!(check_disk_space(dest, 1).is_ok());
+    }
+
+    #[test]
+    fn disk_space_check_fails_for_impossible_size() {
+        let dir = tempdir().unwrap();
+        let dest = dir.path().to_str().unwrap();
+        // u64::MAX is clearly larger than any filesystem.
+        assert!(check_disk_space(dest, u64::MAX).is_err());
+    }
+
+    #[test]
+    fn disk_space_check_handles_nonexistent_dest() {
+        // Walks up to an existing parent.
+        assert!(check_disk_space("/tmp/__nonexistent_andpull_test__", 1).is_ok());
+    }
+}
