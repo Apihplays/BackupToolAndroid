@@ -65,10 +65,11 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
 
     // Worker badge (shown on ProfileSelect).
     if matches!(app.current_view, AppView::ProfileSelect) && !app.restore_input_active {
+        let label = app.worker_label();
         let badge = Paragraph::new(Line::from(vec![
             Span::styled(" Workers: ", Style::default().fg(Color::DarkGray)),
             Span::styled(
-                app.worker_label(),
+                &label,
                 Style::default().fg(Color::Yellow).bold(),
             ),
         ]))
@@ -77,7 +78,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
         let badge_area = Rect {
             x: area.x + 1,
             y: area.y + 1,
-            width: (app.worker_label().len() as u16 + 12).min(area.width.saturating_sub(2)),
+            width: (label.len() as u16 + 12).min(area.width.saturating_sub(2)),
             height: 1,
         };
         frame.render_widget(badge, badge_area);

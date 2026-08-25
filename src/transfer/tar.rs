@@ -66,6 +66,7 @@ impl TarPuller {
                 let p = progress.lock().unwrap();
                 if p.is_cancelled {
                     let _ = child.kill();
+                    let _ = child.wait(); // Reap zombie process.
                     return Err(AppError::Transfer {
                         path: remote_dir.to_string(),
                         reason: "Transfer cancelled".into(),
@@ -409,10 +410,10 @@ mod tests {
             buf.extend_from_slice(data);
             // Pad to 512-byte boundary.
             let padding = (512 - (data.len() % 512)) % 512;
-            buf.extend(std::iter::repeat(0u8).take(padding));
+            buf.extend(std::iter::repeat_n(0u8, padding));
         }
         // End-of-archive marker: two zero blocks.
-        buf.extend(std::iter::repeat(0u8).take(1024));
+        buf.extend(std::iter::repeat_n(0u8, 1024));
         buf
     }
 
@@ -447,7 +448,7 @@ mod tests {
 
         let mut reader = StreamingTarReader::new(Cursor::new(&tar_data));
         let mut count = 0u64;
-        while let Some(_) = reader.stream_next_entry(dest).unwrap() {
+        while reader.stream_next_entry(dest).unwrap().is_some() {
             count += 1;
         }
 
@@ -544,7 +545,7 @@ mod tests {
             tar_data.extend_from_slice(&header);
             tar_data.extend_from_slice(data);
             let padding = (512 - (data.len() % 512)) % 512;
-            tar_data.extend(std::iter::repeat(0u8).take(padding));
+            tar_data.extend(std::iter::repeat_n(0u8, padding));
         }
 
         // 2. Real file entry (header says name is short, but we use the long name).
@@ -570,11 +571,11 @@ mod tests {
             tar_data.extend_from_slice(&header);
             tar_data.extend_from_slice(file_data);
             let padding = (512 - (file_data.len() % 512)) % 512;
-            tar_data.extend(std::iter::repeat(0u8).take(padding));
+            tar_data.extend(std::iter::repeat_n(0u8, padding));
         }
 
         // End-of-archive.
-        tar_data.extend(std::iter::repeat(0u8).take(1024));
+        tar_data.extend(std::iter::repeat_n(0u8, 1024));
 
         let tmp = tempfile::tempdir().unwrap();
         let dest = tmp.path().to_str().unwrap();

@@ -341,9 +341,11 @@ impl TransferEngine {
             }
 
             // Track new vs changed for reporting.
+            // A sync record that already existed but wasn't unchanged means
+            // the file was previously synced but has since changed.
             {
                 let mut progress = self.progress.lock().unwrap();
-                if state_manager.is_completed(state_key) {
+                if state_manager.has_sync_record(state_key) {
                     progress.changed_files += 1;
                 } else {
                     progress.new_files += 1;
@@ -467,9 +469,11 @@ impl TransferEngine {
             }
 
             // Track new vs changed for reporting.
+            // A sync record that already existed but wasn't unchanged means
+            // the file was previously synced but has since changed.
             {
                 let mut progress = self.progress.lock().unwrap();
-                if state_manager.is_completed(state_key) {
+                if state_manager.has_sync_record(state_key) {
                     progress.changed_files += 1;
                 } else {
                     progress.new_files += 1;

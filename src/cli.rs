@@ -119,7 +119,9 @@ pub fn parse_args(args: &[String]) -> ParseOutcome {
         }),
         Some(flag) => ParseOutcome::Error(format!("unknown option or subcommand: {flag}")),
     }
-}fn parse_backup(args: &[String]) -> ParseOutcome {
+}
+
+fn parse_backup(args: &[String]) -> ParseOutcome {
     let mut profiles: Option<Vec<String>> = None;
     let mut with_appdata = false;
     let mut dest: Option<String> = None;

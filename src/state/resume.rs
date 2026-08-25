@@ -184,6 +184,12 @@ impl StateManager {
         }
     }
 
+    /// Returns true if a sync record exists for this path (used to
+    /// distinguish "new" from "changed" in delta reporting).
+    pub fn has_sync_record(&self, path: &str) -> bool {
+        self.sync_map.contains_key(path)
+    }
+
     /// Get the stored hash for a synced file (if available).
     pub fn get_sync_hash(&self, path: &str) -> Option<&str> {
         self.sync_map
