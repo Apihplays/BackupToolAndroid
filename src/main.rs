@@ -116,6 +116,12 @@ fn report_outcomes(outcomes: &[profile::runner::ProfileOutcome]) -> bool {
             } else {
                 println!("[ok] {}: {} files", o.name, o.files_transferred);
             }
+            if o.junk_skipped > 0 {
+                println!(
+                    "[warn] {}: skipped {} build artifacts",
+                    o.name, o.junk_skipped
+                );
+            }
         } else {
             all_ok = false;
             println!(

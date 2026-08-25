@@ -194,6 +194,7 @@ impl RestoreRunner {
             new_files: 0,
             changed_files: 0,
             skipped_files: 0,
+            junk_skipped: 0,
         }
     }
 
@@ -210,6 +211,7 @@ impl RestoreRunner {
                     new_files: 0,
                     changed_files: 0,
                     skipped_files: 0,
+                    junk_skipped: 0,
                 };
             }
         };
@@ -222,6 +224,7 @@ impl RestoreRunner {
                 new_files: 0,
                 changed_files: 0,
                 skipped_files: 0,
+                junk_skipped: 0,
             };
         }
 
@@ -234,6 +237,7 @@ impl RestoreRunner {
                 new_files: 0,
                 changed_files: 0,
                 skipped_files: 0,
+                junk_skipped: 0,
             };
         }
 
@@ -264,6 +268,7 @@ impl RestoreRunner {
                 new_files: 0,
                 changed_files: 0,
                 skipped_files: 0,
+                junk_skipped: 0,
             },
             Err(e) => ProfileOutcome {
                 name: "appdata:restore".to_string(),
@@ -273,6 +278,7 @@ impl RestoreRunner {
                 new_files: 0,
                 changed_files: 0,
                 skipped_files: 0,
+                junk_skipped: 0,
             },
         }
     }

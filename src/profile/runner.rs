@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use crate::adb::client::AdbClient;
 use crate::error::AppResult;
-use crate::profile::ProfileSpec;
+use crate::profile::{is_build_artifact, ProfileSpec};
 use crate::scanner::tree::{FileNode, Scanner};
 use crate::state::StateManager;
 use crate::transfer::engine::{TransferDirection, TransferEngine};
@@ -94,6 +94,7 @@ pub struct ProfileOutcome {
     pub new_files: u64,
     pub changed_files: u64,
     pub skipped_files: u64,
+    pub junk_skipped: u64,
 }
 
 /// Runs multiple profiles in parallel with priority-ordered staggering and a
@@ -275,9 +276,8 @@ fn run_single_profile(
     if !delay.is_zero() {
         thread::sleep(delay);
     }
-
     match transfer_profile(&client, &profile, destination) {
-        Ok((new, changed, skipped, total)) => ProfileOutcome {
+        Ok((new, changed, skipped, total, junk)) => ProfileOutcome {
             name: profile.name,
             success: true,
             error: None,
@@ -285,6 +285,7 @@ fn run_single_profile(
             new_files: new,
             changed_files: changed,
             skipped_files: skipped,
+            junk_skipped: junk,
         },
         Err(e) => ProfileOutcome {
             name: profile.name,
@@ -294,17 +295,18 @@ fn run_single_profile(
             new_files: 0,
             changed_files: 0,
             skipped_files: 0,
+            junk_skipped: 0,
         },
     }
 }
 
 /// Build the device-side tree for a profile and pull all of it.
-/// Returns (new_files, changed_files, skipped_files, total_completed).
+/// Returns (new_files, changed_files, skipped_files, total_completed, junk_skipped).
 fn transfer_profile(
     client: &AdbClient,
     profile: &ProfileSpec,
     destination: &str,
-) -> AppResult<(u64, u64, u64, u64)> {
+) -> AppResult<(u64, u64, u64, u64, u64)> {
     let base_path = profile
         .sources
         .first()
@@ -312,6 +314,7 @@ fn transfer_profile(
         .unwrap_or_else(|| "/sdcard".to_string());
 
     let mut tree = FileNode::root(&base_path);
+    let mut total_junk = 0u64;
 
     // Scan each source into the tree, rooted listing when required.
     for source in &profile.sources {
@@ -325,6 +328,10 @@ fn transfer_profile(
             Scanner::load_children(client, &mut source_root)?;
         }
 
+        // Filter out build artifacts that may have leaked into source dirs.
+        let junk = remove_build_artifacts(&mut source_root);
+        total_junk += junk;
+
         if let Some(exts) = &source.extensions {
             keep_extensions(&mut source_root, exts);
         }
@@ -337,7 +344,7 @@ fn transfer_profile(
 
     // Nothing matched — treat as a successful no-op.
     if tree.selected_file_count() == 0 {
-        return Ok((0, 0, 0, 0));
+        return Ok((0, 0, 0, 0, 0));
     }
 
     let engine = TransferEngine::new();
@@ -352,17 +359,29 @@ fn transfer_profile(
         TransferDirection::Pull,
     )?;
 
+    // Warn if a large number of build artifacts were found.
+    if total_junk >= JUNK_WARN_THRESHOLD as u64 {
+        eprintln!(
+            "[warn] {}: skipped {} build artifacts",
+            profile.name, total_junk
+        );
+    }
+
     let progress = engine.progress.lock().unwrap();
     Ok((
         progress.new_files,
         progress.changed_files,
         progress.skipped_files,
         progress.completed_files,
+        total_junk,
     ))
 }
 
 /// Max recursion depth when scanning profile sources.
 const MAX_SCAN_DEPTH: usize = 4;
+
+/// Minimum number of junk files to trigger a warning.
+const JUNK_WARN_THRESHOLD: usize = 20;
 
 /// Scan a source directory using rooted listing (su cat fallback).
 fn scan_source_rooted(client: &AdbClient, path: &str, node: &mut FileNode) -> AppResult<()> {
@@ -388,6 +407,22 @@ fn scan_source_rooted(client: &AdbClient, path: &str, node: &mut FileNode) -> Ap
     }
     node.compute_totals();
     Ok(())
+}
+
+/// Recursively prune build-artifact junk from a scanned subtree.
+/// Returns the count of pruned files.
+fn remove_build_artifacts(node: &mut FileNode) -> u64 {
+    let mut pruned = 0u64;
+    if node.is_dir {
+        for child in &mut node.children {
+            pruned += remove_build_artifacts(child);
+        }
+        let before = node.children.len();
+        node.children.retain(|c| !(c.is_dir && c.name == "target") && (c.is_dir || !is_build_artifact(&c.name)));
+        pruned += (before - node.children.len()) as u64;
+        node.compute_totals();
+    }
+    pruned
 }
 
 /// Recursively prune non-matching files from a scanned subtree.
