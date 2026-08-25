@@ -1,5 +1,5 @@
 use crate::adb::client::{AdbClient, RemoteEntry};
-use crate::error::AppResult;
+use crate::error::{is_permission_denied, AppResult};
 
 /// Media file extensions to filter for.
 pub const MEDIA_EXTENSIONS: &[&str] = &[
@@ -176,10 +176,11 @@ pub struct Scanner;
 impl Scanner {
     /// Load children for a directory node from the device.
     ///
-    /// Tries a normal `ls -la` first; when that returns no entries (or fails
-    /// with a permission error) and root is available, retries via
-    /// `su -c 'ls -1ap'` so that protected directories (e.g. Android 16
-    /// scoped-storage paths) are still accessible.
+    /// Tries a normal `ls -la` first; when that returns a permission error
+    /// and root is available, retries via `list_dir_rooted` so that
+    /// protected directories (e.g. Android 16 scoped-storage paths) are
+    /// still accessible. Genuine errors (not permission-related) are
+    /// propagated instead of being masked as an empty directory.
     pub fn load_children(client: &AdbClient, node: &mut FileNode) -> AppResult<()> {
         if !node.is_dir || node.loaded {
             return Ok(());
@@ -187,7 +188,15 @@ impl Scanner {
 
         let entries = match client.list_dir(&node.path) {
             Ok(e) if !e.is_empty() => e,
-            _ => client.list_dir_rooted(&node.path)?,
+            Ok(_) => {
+                // Genuinely empty — try rooted listing in case root can
+                // see hidden files that the unprivileged shell cannot.
+                client.list_dir_rooted(&node.path)?
+            }
+            Err(e) if is_permission_denied(&e) => {
+                client.list_dir_rooted(&node.path)?
+            }
+            Err(e) => return Err(e),
         };
         let depth = node.depth + 1;
 

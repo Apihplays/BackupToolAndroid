@@ -10,6 +10,7 @@ use crate::profile::runner::{ProfileBatch, ProfileOutcome, ProfileSlot};
 use crate::profile::{builtin_profiles, ProfileSpec};
 use crate::scanner::{FileNode, LocalScanner, Scanner};
 use crate::state::StateManager;
+use crate::profile::runner::DEFAULT_MAX_WORKERS;
 use crate::transfer::engine::{TransferDirection, TransferEngine, TransferProgress};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +103,11 @@ pub struct App {
     pub profile_batch: Option<ProfileBatch>,
     pub profile_outcomes: Option<Vec<ProfileOutcome>>,
 
+    // Workers
+    /// Worker count override: None = Auto (pool default).
+    /// Cycling: None → 4 → 8 → 12 → 16 → None.
+    pub worker_override: Option<usize>,
+
     // Summary
     pub summary_scroll: u16,
 
@@ -140,6 +146,7 @@ impl App {
             restore_dir_input: String::new(),
             profile_batch: None,
             profile_outcomes: None,
+            worker_override: None,
             summary_scroll: 0,
             status_message: String::new(),
             is_loading: false,
@@ -644,7 +651,7 @@ impl App {
 
             let handle = thread::spawn(move || {
                 let mut state_manager = StateManager::new(&base_path, &destination);
-                let engine = TransferEngine { progress };
+                let engine = TransferEngine { progress, worker_override: None };
 
                 if let Err(e) = engine.execute(
                     &client,
@@ -831,7 +838,8 @@ impl App {
         self.profile_outcomes = None;
         self.current_view = AppView::Transferring;
 
-        let runner = crate::profile::runner::ProfileRunner::default();
+        let max_w = self.worker_override.unwrap_or(DEFAULT_MAX_WORKERS);
+        let runner = crate::profile::runner::ProfileRunner::new(max_w);
         self.profile_batch = Some(runner.spawn_all(client, selected, &destination));
     }
 
@@ -932,6 +940,38 @@ impl App {
     }
 
     // Preview functionality removed
+
+    // === Worker Cycling ===
+
+    /// Cycle workers up: None → 4 → 8 → 12 → 16 → None.
+    pub fn cycle_workers_up(&mut self) {
+        self.worker_override = Some(match self.worker_override {
+            None => 4,
+            Some(4) => 8,
+            Some(8) => 12,
+            Some(12) => 16,
+            _ => return self.worker_override = None,
+        });
+    }
+
+    /// Cycle workers down: None → 16 → 12 → 8 → 4 → None.
+    pub fn cycle_workers_down(&mut self) {
+        self.worker_override = Some(match self.worker_override {
+            None => 16,
+            Some(16) => 12,
+            Some(12) => 8,
+            Some(8) => 4,
+            _ => return self.worker_override = None,
+        });
+    }
+
+    /// Human-readable label for the current worker setting.
+    pub fn worker_label(&self) -> String {
+        match self.worker_override {
+            Some(n) => format!("{} workers", n),
+            None => "Auto workers".into(),
+        }
+    }
 }
 
 /// Find a node in the tree by path (mutable).

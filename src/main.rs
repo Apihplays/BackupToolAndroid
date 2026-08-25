@@ -38,7 +38,8 @@ fn main() {
                 profiles,
                 with_appdata,
                 destination,
-            } => run_backup(profiles, with_appdata, &destination),
+                workers,
+            } => run_backup(profiles, with_appdata, &destination, workers),
             Command::Restore {
                 with_appdata,
                 backup_dir,
@@ -107,7 +108,14 @@ fn report_outcomes(outcomes: &[profile::runner::ProfileOutcome]) -> bool {
     let mut all_ok = true;
     for o in outcomes {
         if o.success {
-            println!("[ok] {}: {} files", o.name, o.files_transferred);
+            if o.new_files > 0 || o.changed_files > 0 || o.skipped_files > 0 {
+                println!(
+                    "[ok] {}: {} new, {} changed, {} skipped",
+                    o.name, o.new_files, o.changed_files, o.skipped_files
+                );
+            } else {
+                println!("[ok] {}: {} files", o.name, o.files_transferred);
+            }
         } else {
             all_ok = false;
             println!(
@@ -131,14 +139,19 @@ fn human_size(bytes: u64) -> String {
     format!("{size:.1} {}", UNITS[unit])
 }
 
-fn run_backup(profiles: Option<Vec<String>>, with_appdata: bool, destination: &str) -> ! {
+fn run_backup(profiles: Option<Vec<String>>, with_appdata: bool, destination: &str, workers: Option<usize>) -> ! {
     ensure_dir(destination);
     let specs = resolve_profiles(profiles);
     let client = Arc::new(connect_device());
 
     println!("Backing up {} profile(s) to {destination}...", specs.len());
+    let runner = if let Some(n) = workers {
+        ProfileRunner::new(n)
+    } else {
+        ProfileRunner::default()
+    };
     let outcomes =
-        ProfileRunner::default().run_all(Arc::clone(&client), specs.clone(), destination);
+        runner.run_all(Arc::clone(&client), specs.clone(), destination);
     let all_ok = report_outcomes(&outcomes);
 
     // App-data backup runs after the media profiles finish (whatsapp only).

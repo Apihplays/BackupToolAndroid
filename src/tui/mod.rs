@@ -183,6 +183,8 @@ fn handle_profile_select_input(app: &mut App, key: KeyCode) {
         KeyCode::Down | KeyCode::Char('j') => app.profile_list_next(),
         KeyCode::Char(' ') => app.profile_toggle(),
         KeyCode::Char('a') => app.profile_toggle_all(),
+        KeyCode::Char('+') | KeyCode::Char('=') => app.cycle_workers_up(),
+        KeyCode::Char('-') | KeyCode::Char('_') => app.cycle_workers_down(),
         KeyCode::Enter => app.start_profile_backup(),
         KeyCode::Char('r') => app.start_restore_input(),
         _ => {}

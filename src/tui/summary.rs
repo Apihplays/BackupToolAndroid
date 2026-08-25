@@ -239,16 +239,21 @@ fn render_profile_summary(frame: &mut Frame, area: Rect, app: &App, outcomes: &[
             ("✗", Color::Red)
         };
 
+        let detail = if outcome.new_files > 0 || outcome.changed_files > 0 || outcome.skipped_files > 0 {
+            format!(
+                "  — {} new, {} changed, {} skipped",
+                outcome.new_files, outcome.changed_files, outcome.skipped_files
+            )
+        } else {
+            format!("  — {} files", outcome.files_transferred)
+        };
         lines.push(Line::from(vec![
             Span::styled(
                 format!("  {} ", mark),
                 Style::default().fg(mark_color).bold(),
             ),
             Span::styled(&outcome.name, Style::default().fg(Color::White).bold()),
-            Span::styled(
-                format!("  — {} files", outcome.files_transferred),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled(detail, Style::default().fg(Color::DarkGray)),
         ]));
 
         if let Some(err) = &outcome.error {

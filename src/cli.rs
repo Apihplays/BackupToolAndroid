@@ -13,6 +13,7 @@ pub enum Command {
         profiles: Option<Vec<String>>,
         with_appdata: bool,
         destination: String,
+        workers: Option<usize>,
     },
     /// Non-interactive restore run.
     Restore {
@@ -43,6 +44,8 @@ BACKUP OPTIONS:
                          (default: all builtin profiles)
     --with-appdata       Also back up app data (requires root) to
                          DEST/<profile>_appdata.tar
+    --workers <N>        Concurrent worker count (default: auto;
+                         USB: 8, WiFi: 2)
     DEST                 Output directory (default: ./andpull_backup_<timestamp>)
 
 RESTORE OPTIONS:
@@ -116,12 +119,11 @@ pub fn parse_args(args: &[String]) -> ParseOutcome {
         }),
         Some(flag) => ParseOutcome::Error(format!("unknown option or subcommand: {flag}")),
     }
-}
-
-fn parse_backup(args: &[String]) -> ParseOutcome {
+}fn parse_backup(args: &[String]) -> ParseOutcome {
     let mut profiles: Option<Vec<String>> = None;
     let mut with_appdata = false;
     let mut dest: Option<String> = None;
+    let mut workers: Option<usize> = None;
 
     let mut i = 0;
     while i < args.len() {
@@ -144,14 +146,28 @@ fn parse_backup(args: &[String]) -> ParseOutcome {
                 profiles = Some(list);
             }
             "--with-appdata" => with_appdata = true,
+            "--workers" => {
+                if i + 1 >= args.len() {
+                    return ParseOutcome::Error("--workers requires a numeric value".to_string());
+                }
+                i += 1;
+                match args[i].parse::<usize>() {
+                    Ok(n) if n > 0 => workers = Some(n),
+                    _ => {
+                        return ParseOutcome::Error(format!(
+                            "--workers: expected a positive integer, got '{}'",
+                            args[i]
+                        ));
+                    }
+                }
+            }
             s if s.starts_with('-') && s.len() > 1 => {
                 return ParseOutcome::Error(format!("unknown flag for backup: {s}"));
             }
             s => {
                 if dest.is_some() {
                     return ParseOutcome::Error(format!(
-                        "unexpected extra argument for backup: {s}"
-                    ));
+                        "unexpected extra argument for backup: {s}"));
                 }
                 dest = Some(s.to_string());
             }
@@ -163,6 +179,7 @@ fn parse_backup(args: &[String]) -> ParseOutcome {
         profiles,
         with_appdata,
         destination: dest.unwrap_or_else(default_backup_destination),
+        workers,
     })
 }
 
@@ -237,9 +254,11 @@ mod tests {
                 profiles,
                 with_appdata,
                 destination,
+                workers,
             }) => {
                 assert!(profiles.is_none());
                 assert!(!with_appdata);
+                assert!(workers.is_none());
                 assert!(destination.starts_with("andpull_backup_"));
                 assert_eq!(destination.len(), "andpull_backup_YYYYmmdd_HHMMSS".len());
             }
@@ -262,6 +281,7 @@ mod tests {
                 profiles: Some(vec!["whatsapp".to_string(), "dcim".to_string()]),
                 with_appdata: true,
                 destination: "/tmp/x".to_string(),
+                workers: None,
             })
         );
     }
@@ -297,6 +317,34 @@ mod tests {
     fn backup_extra_positional_errors() {
         assert!(matches!(
             parse_args(&v(&["backup", "/a", "/b"])),
+            ParseOutcome::Error(_)
+        ));
+    }
+
+    #[test]
+    fn backup_workers_parses() {
+        let out = parse_args(&v(&["backup", "--workers", "12", "/tmp/bk"]));
+        match out {
+            ParseOutcome::Run(Command::Backup { workers, destination, .. }) => {
+                assert_eq!(workers, Some(12));
+                assert_eq!(destination, "/tmp/bk");
+            }
+            other => panic!("unexpected outcome: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn backup_workers_rejects_zero() {
+        assert!(matches!(
+            parse_args(&v(&["backup", "--workers", "0"])),
+            ParseOutcome::Error(_)
+        ));
+    }
+
+    #[test]
+    fn backup_workers_rejects_non_numeric() {
+        assert!(matches!(
+            parse_args(&v(&["backup", "--workers", "abc"])),
             ParseOutcome::Error(_)
         ));
     }

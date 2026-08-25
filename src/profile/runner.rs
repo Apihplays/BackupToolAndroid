@@ -19,7 +19,7 @@ use crate::transfer::engine::{TransferDirection, TransferEngine};
 const START_DELAY_STEP: Duration = Duration::from_secs(2);
 
 /// Default maximum number of concurrently running transfer threads.
-pub const DEFAULT_MAX_WORKERS: usize = 6;
+pub const DEFAULT_MAX_WORKERS: usize = 16;
 
 /// Compute the start schedule for a set of profiles.
 ///
@@ -91,6 +91,9 @@ pub struct ProfileOutcome {
     pub success: bool,
     pub error: Option<String>,
     pub files_transferred: u64,
+    pub new_files: u64,
+    pub changed_files: u64,
+    pub skipped_files: u64,
 }
 
 /// Runs multiple profiles in parallel with priority-ordered staggering and a
@@ -274,27 +277,34 @@ fn run_single_profile(
     }
 
     match transfer_profile(&client, &profile, destination) {
-        Ok(files) => ProfileOutcome {
+        Ok((new, changed, skipped, total)) => ProfileOutcome {
             name: profile.name,
             success: true,
             error: None,
-            files_transferred: files,
+            files_transferred: total,
+            new_files: new,
+            changed_files: changed,
+            skipped_files: skipped,
         },
         Err(e) => ProfileOutcome {
             name: profile.name,
             success: false,
             error: Some(e.to_string()),
             files_transferred: 0,
+            new_files: 0,
+            changed_files: 0,
+            skipped_files: 0,
         },
     }
 }
 
 /// Build the device-side tree for a profile and pull all of it.
+/// Returns (new_files, changed_files, skipped_files, total_completed).
 fn transfer_profile(
     client: &AdbClient,
     profile: &ProfileSpec,
     destination: &str,
-) -> AppResult<u64> {
+) -> AppResult<(u64, u64, u64, u64)> {
     let base_path = profile
         .sources
         .first()
@@ -327,7 +337,7 @@ fn transfer_profile(
 
     // Nothing matched — treat as a successful no-op.
     if tree.selected_file_count() == 0 {
-        return Ok(0);
+        return Ok((0, 0, 0, 0));
     }
 
     let engine = TransferEngine::new();
@@ -343,7 +353,12 @@ fn transfer_profile(
     )?;
 
     let progress = engine.progress.lock().unwrap();
-    Ok(progress.completed_files)
+    Ok((
+        progress.new_files,
+        progress.changed_files,
+        progress.skipped_files,
+        progress.completed_files,
+    ))
 }
 
 /// Max recursion depth when scanning profile sources.
@@ -490,7 +505,7 @@ mod tests {
 
     #[test]
     fn default_runner_uses_suggested_worker_budget() {
-        assert_eq!(DEFAULT_MAX_WORKERS, 6);
-        assert_eq!(ProfileRunner::default().max_workers, 6);
+        assert_eq!(DEFAULT_MAX_WORKERS, 16);
+        assert_eq!(ProfileRunner::default().max_workers, 16);
     }
 }

@@ -2,20 +2,7 @@ use std::io::Read;
 use std::path::Path;
 
 use crate::adb::client::{quote_shell, AdbClient};
-use crate::error::{AppError, AppResult};
-
-/// Returns `true` when the error indicates a permission denial that might
-/// be bypassed with root access on the device.
-fn is_permission_denied(e: &AppError) -> bool {
-    match e {
-        AppError::Permission { .. } => true,
-        AppError::Transfer { reason, .. } => {
-            reason.contains("Permission denied") || reason.contains("Operation not permitted")
-        }
-        AppError::Io(io) => io.kind() == std::io::ErrorKind::PermissionDenied,
-        _ => false,
-    }
-}
+use crate::error::{is_permission_denied, AppError, AppResult};
 
 /// Pulls individual files using ADB pull command.
 /// This is the fallback when tar streaming isn't available or when

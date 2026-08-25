@@ -31,10 +31,30 @@ impl WorkerPool {
         }
     }
 
-    /// Auto-detect optimal worker count based on device connection type.
-    /// USB connections get 4 workers, WiFi gets 2 (to avoid congestion).
-    pub fn auto_detect(device: &DeviceInfo) -> Self {
-        let count = if device.transport == "wifi" { 2 } else { 4 };
+    /// Auto-detect optimal worker count based on device connection type,
+    /// with an optional user override.
+    ///
+    /// Defaults: USB → 8, WiFi → 2.  An explicit `override_count`
+    /// replaces the default; values above 16 on WiFi are capped with a
+    /// warning (printed to stderr).
+    pub fn auto_detect(device: &DeviceInfo, override_count: Option<usize>) -> Self {
+        let count = if let Some(n) = override_count {
+            n
+        } else if device.transport == "wifi" {
+            2
+        } else {
+            8
+        };
+
+        // Sanity: warn on excessively high WiFi worker counts.
+        if device.transport == "wifi" && count > 16 {
+            eprintln!(
+                "Warning: {} workers over WiFi may cause congestion; capping at 16.",
+                count
+            );
+            return Self::new(16);
+        }
+
         Self::new(count)
     }
 
@@ -148,6 +168,7 @@ impl WorkerPool {
                                 job.size,
                                 &job.local_path,
                                 file_hash,
+                                job.mtime,
                             );
                         }
                         Err(e) => {

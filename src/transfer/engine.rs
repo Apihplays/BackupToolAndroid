@@ -25,6 +25,8 @@ pub struct TransferProgress {
     pub failed_files: u64,
     pub skipped_files: u64,
     pub delta_skipped: u64,
+    pub new_files: u64,
+    pub changed_files: u64,
     pub total_bytes: u64,
     pub transferred_bytes: u64,
     pub current_file: String,
@@ -47,6 +49,8 @@ impl TransferProgress {
             failed_files: 0,
             skipped_files: 0,
             delta_skipped: 0,
+            new_files: 0,
+            changed_files: 0,
             total_bytes,
             transferred_bytes: 0,
             current_file: String::new(),
@@ -101,13 +105,20 @@ impl TransferProgress {
 /// The transfer engine orchestrates file pulling from device to local disk.
 pub struct TransferEngine {
     pub progress: Arc<Mutex<TransferProgress>>,
+    pub worker_override: Option<usize>,
 }
 
 impl TransferEngine {
     pub fn new() -> Self {
         Self {
             progress: Arc::new(Mutex::new(TransferProgress::new(0, 0))),
+            worker_override: None,
         }
+    }
+
+    pub fn with_workers(mut self, workers: usize) -> Self {
+        self.worker_override = Some(workers);
+        self
     }
 
     /// Execute a transfer for the given selected nodes.
@@ -150,7 +161,7 @@ impl TransferEngine {
         let pool = client
             .selected_device
             .as_ref()
-            .map(WorkerPool::auto_detect)
+            .map(|d| WorkerPool::auto_detect(d, self.worker_override))
             .unwrap_or_else(|| WorkerPool::new(1));
 
         // Process selected directories
@@ -165,21 +176,17 @@ impl TransferEngine {
             let local_dir = Path::new(destination).join(relative);
 
             if has_tar && direction == TransferDirection::Pull {
-                // Use tar streaming for entire directory
+                // Use tar streaming for entire directory — streaming
+                // extraction records per-file state as it goes.
                 match TarPuller::pull_dir(
                     client,
                     &dir_node.path,
                     local_dir.to_str().unwrap_or(""),
                     &self.progress,
+                    state_manager,
                 ) {
-                    Ok(stats) => {
-                        let mut progress = self.progress.lock().unwrap();
-                        progress.completed_files += stats.files_pulled;
-                        progress.transferred_bytes += stats.bytes_transferred;
-                        progress.update_speed();
-
-                        // Record in state
-                        state_manager.mark_dir_completed(&dir_node.path);
+                    Ok(_stats) => {
+                        // Per-file state already recorded inside pull_dir.
                     }
                     Err(e) => {
                         // Fallback to concurrent file pull
@@ -323,7 +330,7 @@ impl TransferEngine {
             }
 
             // Delta sync: check if file is unchanged since last sync
-            if state_manager.is_unchanged(state_key, file.size) {
+            if state_manager.is_unchanged_strict(state_key, file.size, file.mtime) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.delta_skipped += 1;
                 progress.skipped_files += 1;
@@ -331,6 +338,16 @@ impl TransferEngine {
                 progress.transferred_bytes += file.size;
                 progress.update_speed();
                 continue;
+            }
+
+            // Track new vs changed for reporting.
+            {
+                let mut progress = self.progress.lock().unwrap();
+                if state_manager.is_completed(state_key) {
+                    progress.changed_files += 1;
+                } else {
+                    progress.new_files += 1;
+                }
             }
 
             // Build job for worker pool
@@ -359,7 +376,7 @@ impl TransferEngine {
             StateManager::new("", destination),
         )));
 
-        let pool = WorkerPool::auto_detect(client.selected_device.as_ref().unwrap());
+        let pool = WorkerPool::auto_detect(client.selected_device.as_ref().unwrap(), self.worker_override);
         pool.execute(
             &device,
             jobs,
@@ -439,8 +456,8 @@ impl TransferEngine {
                 continue;
             }
 
-            // Delta sync: check if file is unchanged since last sync (size comparison)
-            if state_manager.is_unchanged(state_key, file_node.size) {
+            // Delta sync: check if file is unchanged since last sync
+            if state_manager.is_unchanged_strict(state_key, file_node.size, file_node.mtime) {
                 let mut progress = self.progress.lock().unwrap();
                 progress.delta_skipped += 1;
                 progress.completed_files += 1;
@@ -449,9 +466,14 @@ impl TransferEngine {
                 continue;
             }
 
-            // Update current file
+            // Track new vs changed for reporting.
             {
                 let mut progress = self.progress.lock().unwrap();
+                if state_manager.is_completed(state_key) {
+                    progress.changed_files += 1;
+                } else {
+                    progress.new_files += 1;
+                }
                 progress.current_file = file_node.name.clone();
             }
 
@@ -499,6 +521,7 @@ impl TransferEngine {
                         file_node.size,
                         &local_path,
                         file_hash,
+                        file_node.mtime,
                     );
                 }
                 Err(e) => {

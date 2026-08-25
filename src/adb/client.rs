@@ -226,8 +226,11 @@ impl AdbClient {
 
     /// Pull a directory using tar streaming (much faster for bulk).
     /// Returns a child process whose stdout streams the tar data.
+    ///
+    /// stderr is NOT silenced — callers must check `child.wait()` and
+    /// capture stderr to detect device-side tar errors or truncation.
     pub fn pull_dir_tar_stream(&self, remote_dir: &str) -> AppResult<std::process::Child> {
-        let cmd = format!("cd '{}' && tar cf - . 2>/dev/null", remote_dir);
+        let cmd = format!("cd '{}' && tar cf - .", remote_dir);
         self.shell_stream(&cmd)
     }
 
@@ -295,27 +298,36 @@ impl AdbClient {
         matches!(self.shell_command("su -c id"), Ok(output) if output.contains("uid=0"))
     }
 
-    /// List a directory, falling back to a rooted listing via su when the
-    /// normal listing fails, comes back empty, or hits a permission error.
+    /// List a directory, falling back to a rooted listing via `su` when
+    /// the normal listing fails with a permission error, comes back empty
+    /// while root is available, or errors and root is available.
     ///
-    /// Uses `ls -la` under `su` so that file sizes and types are preserved
-    /// (better than the old `ls -1ap` which lost metadata).
+    /// Returns the original `Err` when su is unavailable and the plain
+    /// listing failed (rather than masking the error as an empty dir).
     pub fn list_dir_rooted(&self, remote_path: &str) -> AppResult<Vec<RemoteEntry>> {
-        match self.list_dir(remote_path) {
-            Ok(entries) if !entries.is_empty() => Ok(entries),
-            _ => {
-                if self.su_available() {
-                    let quoted = quote_shell(remote_path);
-                    // -1a: one entry per line, show hidden files
-                    // -p: append '/' to directories
-                    let cmd = format!("su -c 'ls -1ap {}'", quoted);
-                    let output = self.shell_command(&cmd)?;
-                    Ok(parse_ls_simple(&output, remote_path))
-                } else {
-                    Ok(Vec::new())
+        let plain_result = self.list_dir(remote_path);
+
+        // If plain listing returned results, return them immediately.
+        if let Ok(ref entries) = plain_result {
+            if !entries.is_empty() {
+                return Ok(entries.clone());
+            }
+        }
+
+        // Plain listing was empty or errored — try rooted fallback.
+        if self.su_available() {
+            let quoted = quote_shell(remote_path);
+            let cmd = format!("su -c 'ls -1ap {}'", quoted);
+            if let Ok(output) = self.shell_command(&cmd) {
+                let entries = parse_ls_simple(&output, remote_path);
+                if !entries.is_empty() {
+                    return Ok(entries);
                 }
             }
         }
+
+        // No rooted results — propagate original result (Ok(empty) or Err).
+        plain_result
     }
 
     /// Get the size of a remote file via rooted `wc -c`.

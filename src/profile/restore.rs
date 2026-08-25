@@ -191,6 +191,9 @@ impl RestoreRunner {
                 Some(errors.join("; "))
             },
             files_transferred: transferred,
+            new_files: 0,
+            changed_files: 0,
+            skipped_files: 0,
         }
     }
 
@@ -204,6 +207,9 @@ impl RestoreRunner {
                     success: false,
                     error: Some(format!("cannot read {}: {e}", tar_path.display())),
                     files_transferred: 0,
+                    new_files: 0,
+                    changed_files: 0,
+                    skipped_files: 0,
                 };
             }
         };
@@ -213,6 +219,9 @@ impl RestoreRunner {
                 success: true,
                 error: None,
                 files_transferred: 0,
+                new_files: 0,
+                changed_files: 0,
+                skipped_files: 0,
             };
         }
 
@@ -222,6 +231,9 @@ impl RestoreRunner {
                 success: false,
                 error: Some("su unavailable; cannot restore app-data".to_string()),
                 files_transferred: 0,
+                new_files: 0,
+                changed_files: 0,
+                skipped_files: 0,
             };
         }
 
@@ -249,12 +261,18 @@ impl RestoreRunner {
                 success: true,
                 error: None,
                 files_transferred: 0,
+                new_files: 0,
+                changed_files: 0,
+                skipped_files: 0,
             },
             Err(e) => ProfileOutcome {
                 name: "appdata:restore".to_string(),
                 success: false,
                 error: Some(e.to_string()),
                 files_transferred: 0,
+                new_files: 0,
+                changed_files: 0,
+                skipped_files: 0,
             },
         }
     }

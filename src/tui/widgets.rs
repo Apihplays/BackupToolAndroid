@@ -42,7 +42,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             if app.restore_input_active {
                 "Type backup dir │ Enter Start Restore │ Esc Cancel"
             } else {
-                "↑↓ Navigate │ Space Toggle │ a All │ Enter Backup │ r Restore │ Esc Back │ q Quit"
+                "↑↓ Navigate │ Space Toggle │ a All │ +/− Workers │ Enter Backup │ r Restore │ Esc Back │ q Quit"
             }
         }
         AppView::FileBrowser => "↑↓ Navigate │ Space Select │ Enter Expand │ a All │ n None │ f Filter │ s Start │ r Resume │ q Quit",
@@ -62,6 +62,26 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, app: &App) {
             .border_style(Style::default().fg(Color::DarkGray))
             .style(Style::default().bg(Color::Rgb(20, 20, 30))),
     );
+
+    // Worker badge (shown on ProfileSelect).
+    if matches!(app.current_view, AppView::ProfileSelect) && !app.restore_input_active {
+        let badge = Paragraph::new(Line::from(vec![
+            Span::styled(" Workers: ", Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                app.worker_label(),
+                Style::default().fg(Color::Yellow).bold(),
+            ),
+        ]))
+        .style(Style::default().bg(Color::Rgb(20, 20, 30)));
+        // Overlay badge on the left inside the status bar area.
+        let badge_area = Rect {
+            x: area.x + 1,
+            y: area.y + 1,
+            width: (app.worker_label().len() as u16 + 12).min(area.width.saturating_sub(2)),
+            height: 1,
+        };
+        frame.render_widget(badge, badge_area);
+    }
 
     frame.render_widget(status, area);
 }

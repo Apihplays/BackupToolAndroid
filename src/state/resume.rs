@@ -27,11 +27,17 @@ pub struct FailedFile {
     pub last_attempt: DateTime<Utc>,
 }
 
-/// A sync record for delta comparison — tracks file size at last successful pull.
+/// A sync record for delta comparison — tracks file size and mtime at last
+/// successful pull.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncRecord {
     pub path: String,
     pub size: u64,
+    /// Modification time (epoch seconds) at last sync. 0 means "unknown"
+    /// and is treated as a wildcard — only size is compared for backward
+    /// compatibility with records created before mtime tracking was added.
+    #[serde(default)]
+    pub mtime: u64,
     /// xxh3-128 hash at last sync (hex string). None for records created before hashing.
     #[serde(default)]
     pub hash: Option<String>,
@@ -76,7 +82,7 @@ pub struct StateManager {
     state: TransferState,
     state_file: PathBuf,
     completed_set: HashSet<String>, // fast lookup for resume
-    sync_map: HashMap<String, (u64, Option<String>)>, // fast lookup for delta: path -> (size, hash)
+    sync_map: HashMap<String, SyncRecord>, // fast lookup for delta: path -> record
     max_retries: u32,
 }
 
@@ -123,10 +129,11 @@ impl StateManager {
             .map(|f| f.path.clone())
             .collect();
 
-        let sync_map: HashMap<String, (u64, Option<String>)> = state
+        let sync_map: HashMap<String, SyncRecord> = state
             .synced_files
             .iter()
-            .map(|r| (r.path.clone(), (r.size, r.hash.clone())))
+            .cloned()
+            .map(|r| (r.path.clone(), r))
             .collect();
 
         Some(Self {
@@ -149,11 +156,29 @@ impl StateManager {
     }
 
     /// Delta sync: check if a remote file is unchanged since last sync.
-    /// Uses hash comparison when available, falls back to size-only.
+    /// Uses size-only comparison. For strict mtime+size comparison, see
+    /// [`is_unchanged_strict`].
     pub fn is_unchanged(&self, path: &str, remote_size: u64) -> bool {
-        if let Some((last_size, _hash)) = self.sync_map.get(path) {
-            // Size must always match; hash is checked during integrity verification
-            *last_size == remote_size
+        if let Some(record) = self.sync_map.get(path) {
+            record.size == remote_size
+        } else {
+            false
+        }
+    }
+
+    /// Strict delta sync: check size **and** mtime. A stored mtime of 0
+    /// means "unknown" (back-compat with older state files) and acts as a
+    /// wildcard — only size is compared.
+    pub fn is_unchanged_strict(&self, path: &str, remote_size: u64, remote_mtime: u64) -> bool {
+        if let Some(record) = self.sync_map.get(path) {
+            if record.size != remote_size {
+                return false;
+            }
+            // mtime == 0 in the record means legacy / unknown → size-only
+            if record.mtime != 0 && remote_mtime != 0 {
+                return record.mtime == remote_mtime;
+            }
+            true
         } else {
             false
         }
@@ -163,34 +188,40 @@ impl StateManager {
     pub fn get_sync_hash(&self, path: &str) -> Option<&str> {
         self.sync_map
             .get(path)
-            .and_then(|(_, hash)| hash.as_deref())
+            .and_then(|r| r.hash.as_deref())
     }
 
-    /// Update the sync record after a successful pull, with optional hash.
+    /// Update the sync record after a successful pull, with optional hash
+    /// and mtime.
     pub fn update_sync_record(
         &mut self,
         path: &str,
         size: u64,
         local_path: &str,
         hash: Option<String>,
+        mtime: u64,
     ) {
+        let record = SyncRecord {
+            path: path.to_string(),
+            size,
+            mtime,
+            hash: hash.clone(),
+            local_path: local_path.to_string(),
+            synced_at: Utc::now(),
+        };
+
         // Update or insert into the sync map
-        self.sync_map.insert(path.to_string(), (size, hash.clone()));
+        self.sync_map.insert(path.to_string(), record.clone());
 
         // Update or insert into the persisted list
         if let Some(existing) = self.state.synced_files.iter_mut().find(|r| r.path == path) {
             existing.size = size;
+            existing.mtime = mtime;
             existing.hash = hash;
             existing.local_path = local_path.to_string();
             existing.synced_at = Utc::now();
         } else {
-            self.state.synced_files.push(SyncRecord {
-                path: path.to_string(),
-                size,
-                hash,
-                local_path: local_path.to_string(),
-                synced_at: Utc::now(),
-            });
+            self.state.synced_files.push(record);
         }
     }
 

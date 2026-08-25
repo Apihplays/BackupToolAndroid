@@ -50,7 +50,10 @@ Once the TUI is running, you can navigate using the following keys:
 
 - **UI Framework:** Built with [ratatui](https://github.com/ratatui-org/ratatui) & crossterm.
 - **State Management:** Sync history is saved locally via `serde_json`, tracking sizes, modification times, and xxh3 hashes.
-- **Transfer Engine:** Dynamically auto-detects device connection types and scales the `WorkerPool` (e.g. fewer workers for wireless ADB, more for USB 3.0) to avoid overloading the ADB daemon.
+- **Delta Sync:** mtime + size comparison for true incremental transfers — re-runs skip unchanged files in seconds.
+- **Streaming Tar Fast-Path:** Extracts device tar streams on-the-fly (no temp file) with per-file state tracking.
+- **Rooted Fallback:** Automatically uses `su` when ADB commands hit permission walls (Android 16+).
+- **Transfer Engine:** Dynamically auto-detects device connection types and scales the `WorkerPool` (USB: 8 workers, WiFi: 2) to avoid overloading the ADB daemon. Override with `--workers N`.
 
 ## 📝 License
 
