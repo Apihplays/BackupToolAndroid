@@ -6,3 +6,8 @@
 *.ab
 /.agent/
 /docs/
+
+# Hermes plans & docs
+.hermes/
+PRD_v0.2.0.md
+OPTIMIZATION_PLAN.md
